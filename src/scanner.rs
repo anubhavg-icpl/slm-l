@@ -149,4 +149,180 @@ mod tests {
         let hits = scan(src, Language::Rust);
         assert!(hits.iter().all(|h| h.severity != "CRITICAL"), "safe Rust should have no CRITICAL");
     }
+
+    // ── C new patterns ─────────────────────────────────────────────────────
+
+    #[test]
+    fn c_exec_family_is_critical() {
+        let src = r#"execvp(cmd, args);"#;
+        assert!(has_sev(&scan(src, Language::C), "exec-family", "CRITICAL"));
+    }
+
+    #[test]
+    fn c_tmpnam_detected() {
+        let src = r#"char *name = tmpnam(NULL);"#;
+        assert!(has(&scan(src, Language::C), "tmpnam-toctou"));
+    }
+
+    #[test]
+    fn c_alloca_detected() {
+        let src = r#"char *buf = alloca(n);"#;
+        assert!(has(&scan(src, Language::C), "alloca-stack-overflow"));
+    }
+
+    #[test]
+    fn c_vprintf_format_detected() {
+        let src = r#"vprintf(fmt, args);"#;
+        assert!(has(&scan(src, Language::C), "vprintf-format-string"));
+    }
+
+    #[test]
+    fn c_dlopen_detected() {
+        let src = r#"void *h = dlopen(user_path, RTLD_LAZY);"#;
+        assert!(has(&scan(src, Language::C), "dlopen-user-path"));
+    }
+
+    #[test]
+    fn c_mmap_exec_detected() {
+        let src = r#"mmap(0, len, PROT_READ|PROT_EXEC, MAP_ANON, -1, 0);"#;
+        assert!(has(&scan(src, Language::C), "mmap-exec"));
+    }
+
+    #[test]
+    fn c_chroot_detected() {
+        let src = r#"chroot("/sandbox");"#;
+        assert!(has(&scan(src, Language::C), "chroot-no-chdir"));
+    }
+
+    #[test]
+    fn c_getenv_detected() {
+        let src = r#"char *p = getenv("PATH");"#;
+        assert!(has(&scan(src, Language::C), "getenv-unchecked"));
+    }
+
+    // ── C++ new patterns ───────────────────────────────────────────────────
+
+    #[test]
+    fn cpp_dynamic_cast_unchecked_detected() {
+        let src = r#"Derived* d = dynamic_cast<Derived*>(base);"#;
+        assert!(has(&scan(src, Language::Cpp), "dynamic-cast-unchecked"));
+    }
+
+    #[test]
+    fn cpp_catch_all_swallow_detected() {
+        let src = r#"try { risky(); } catch (...) {}"#;
+        assert!(has(&scan(src, Language::Cpp), "catch-all-swallow"));
+    }
+
+    #[test]
+    fn cpp_integer_overflow_alloc_detected() {
+        let src = r#"int* buf = new int[n * sizeof(int)];"#;
+        assert!(has(&scan(src, Language::Cpp), "integer-overflow-alloc"));
+    }
+
+    // ── C# new patterns ────────────────────────────────────────────────────
+
+    #[test]
+    fn dotnet_ldap_injection_is_critical() {
+        let src = r#"var ds = new DirectorySearcher("(uid=" + userInput + ")");"#;
+        assert!(has_sev(&scan(src, Language::DotNet), "ldap-injection", "CRITICAL"));
+    }
+
+    #[test]
+    fn dotnet_xpath_injection_is_critical() {
+        let src = r#"var nodes = doc.SelectNodes("/users[@id='" + id + "']");"#;
+        assert!(has_sev(&scan(src, Language::DotNet), "xpath-injection", "CRITICAL"));
+    }
+
+    #[test]
+    fn dotnet_type_name_handling_is_critical() {
+        let src = r#"var settings = new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.All };"#;
+        assert!(has_sev(&scan(src, Language::DotNet), "type-name-handling", "CRITICAL"));
+    }
+
+    #[test]
+    fn dotnet_soap_formatter_is_critical() {
+        let src = r#"var sf = new SoapFormatter(); sf.Deserialize(stream);"#;
+        assert!(has_sev(&scan(src, Language::DotNet), "soap-formatter", "CRITICAL"));
+    }
+
+    #[test]
+    fn dotnet_weak_cipher_detected() {
+        let src = r#"using var des = new DESCryptoServiceProvider();"#;
+        assert!(has(&scan(src, Language::DotNet), "weak-cipher"));
+    }
+
+    #[test]
+    fn dotnet_ecb_mode_detected() {
+        let src = r#"aes.Mode = CipherMode.ECB;"#;
+        assert!(has(&scan(src, Language::DotNet), "ecb-mode"));
+    }
+
+    #[test]
+    fn dotnet_cert_bypass_detected() {
+        let src = r#"ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };"#;
+        assert!(has(&scan(src, Language::DotNet), "cert-validation-bypass"));
+    }
+
+    #[test]
+    fn dotnet_hardcoded_connstring_detected() {
+        let src = r#"string connectionString = "Server=prod;Password=S3cr3t!;";"#;
+        assert!(has(&scan(src, Language::DotNet), "hardcoded-connstring"));
+    }
+
+    // ── Rust new patterns ──────────────────────────────────────────────────
+
+    #[test]
+    fn rust_box_from_raw_detected() {
+        let src = r#"let b = Box::from_raw(raw_ptr);"#;
+        assert!(has(&scan(src, Language::Rust), "box-from-raw"));
+    }
+
+    #[test]
+    fn rust_maybe_uninit_assume_init_detected() {
+        let src = r#"let val = MaybeUninit::<u64>::uninit().assume_init();"#;
+        assert!(has(&scan(src, Language::Rust), "maybe-uninit-assume-init"));
+    }
+
+    #[test]
+    fn rust_from_utf8_unchecked_detected() {
+        let src = r#"let s = String::from_utf8_unchecked(bytes);"#;
+        assert!(has(&scan(src, Language::Rust), "from-utf8-unchecked"));
+    }
+
+    #[test]
+    fn rust_cstr_from_ptr_detected() {
+        let src = r#"let s = CStr::from_ptr(ptr);"#;
+        assert!(has(&scan(src, Language::Rust), "cstr-from-ptr"));
+    }
+
+    #[test]
+    fn rust_ptr_read_write_detected() {
+        let src = r#"ptr::write(dest, value);"#;
+        assert!(has(&scan(src, Language::Rust), "ptr-read-write"));
+    }
+
+    #[test]
+    fn rust_vec_set_len_detected() {
+        let src = r#"v.set_len(new_len);"#;
+        assert!(has(&scan(src, Language::Rust), "vec-set-len"));
+    }
+
+    #[test]
+    fn rust_nonnull_unchecked_detected() {
+        let src = r#"let nn = NonNull::new_unchecked(ptr);"#;
+        assert!(has(&scan(src, Language::Rust), "nonnull-new-unchecked"));
+    }
+
+    #[test]
+    fn rust_from_raw_parts_mut_detected() {
+        let src = r#"let s = slice::from_raw_parts_mut(ptr, len);"#;
+        assert!(has(&scan(src, Language::Rust), "from-raw-parts-mut"));
+    }
+
+    #[test]
+    fn rust_hardcoded_secret_detected() {
+        let src = r#"const API_KEY: &str = "sk-prod-abcdef1234567890";"#;
+        assert!(has(&scan(src, Language::Rust), "hardcoded-secret"));
+    }
 }
