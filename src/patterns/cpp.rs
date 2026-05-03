@@ -53,7 +53,7 @@ pub static PATTERNS: &[Pattern] = &[
     },
     Pattern {
         name: "delete-without-bracket",
-        regex: r"\bdelete\s+[^[\s]",
+        regex: r"\bdelete\s+[^\[\s]",
         severity: "HIGH",
         description: "delete on an array allocated with new[] is undefined behaviour. Use delete[].",
     },

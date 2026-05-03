@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use walkdir::WalkDir;
 
-use crate::{detector::Language, llm::{AuditModel, Confidence}, report, scanner};
+use crate::{detector::Language, llm::{AuditModel, Confidence, Finding}, report, scanner};
 
 #[derive(Parser)]
 #[command(
@@ -39,6 +39,10 @@ enum Commands {
         /// Minimum confidence level to include in output
         #[arg(long, default_value = "low", value_enum)]
         min_confidence: ConfidenceArg,
+
+        /// Run static pattern scan only — skip LLM inference (fast, no model download)
+        #[arg(long)]
+        static_only: bool,
     },
 }
 
@@ -74,6 +78,20 @@ impl From<&ConfidenceArg> for Confidence {
     }
 }
 
+fn static_hits_to_findings(hits: &[scanner::StaticHit]) -> Vec<Finding> {
+    hits.iter()
+        .map(|h| Finding {
+            line: Some(h.line as u32),
+            severity: h.severity.to_string(),
+            category: h.pattern_name.to_string(),
+            pattern: h.matched_text.clone(),
+            explanation: h.description.to_string(),
+            suggestion: String::new(),
+            confidence: Confidence::Low,
+        })
+        .collect()
+}
+
 fn lang_from_arg(arg: &LangArg) -> Language {
     match arg {
         LangArg::C => Language::C,
@@ -93,6 +111,7 @@ pub async fn run() -> anyhow::Result<()> {
             format,
             timeout,
             min_confidence,
+            static_only,
         } => {
             let files: Vec<PathBuf> = if path.is_file() {
                 vec![path.clone()]
@@ -115,7 +134,12 @@ pub async fn run() -> anyhow::Result<()> {
                 anyhow::bail!("No supported source files found at: {}", path.display());
             }
 
-            let model = AuditModel::load().await?;
+            let model = if static_only {
+                None
+            } else {
+                Some(AuditModel::load().await?)
+            };
+
             let min_conf = Confidence::from(&min_confidence);
             let mut results = Vec::new();
 
@@ -139,12 +163,14 @@ pub async fn run() -> anyhow::Result<()> {
 
                 eprintln!("Auditing {} [{}]...", file.display(), language.name());
                 let static_hits = scanner::scan(&source, language);
-                let mut findings =
-                    model.analyze(&source, language, &static_hits, file, timeout).await?;
 
-                // Apply confidence filter
+                let mut findings = if let Some(ref m) = model {
+                    m.analyze(&source, language, &static_hits, file, timeout).await?
+                } else {
+                    static_hits_to_findings(&static_hits)
+                };
+
                 findings.retain(|f| f.confidence >= min_conf);
-
                 results.push((file.clone(), language, findings));
             }
 
