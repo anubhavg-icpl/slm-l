@@ -12,7 +12,7 @@
 [![CI](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
 [![Tests](https://img.shields.io/badge/tests-17%20passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-2021--edition-orange?style=flat-square)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-2024--edition-orange?style=flat-square)](https://www.rust-lang.org)
 [![Model](https://img.shields.io/badge/model-Phi--3--mini--4k-purple?style=flat-square)](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
 [![Inference](https://img.shields.io/badge/inference-100%25_local-green?style=flat-square)](#model-configuration)
 [![SARIF](https://img.shields.io/badge/output-SARIF_2.1.0-informational?style=flat-square)](#output-formats)
@@ -97,19 +97,19 @@ Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findi
 
 | Feature | Status |
 |---------|--------|
-| C, C++, C#/.NET, Rust support | ✅ |
-| 50+ static vulnerability patterns | ✅ |
-| Local Phi-3 SLM inference via Kalosm | ✅ |
-| Function-level chunking for large files | ✅ |
-| Confidence scoring (LOW / MEDIUM / HIGH) | ✅ |
-| `--min-confidence` filter | ✅ |
-| Per-file inference timeout (`--timeout`) | ✅ |
-| Terminal colored output | ✅ |
-| JSON output (SIEM / XDR pipeable) | ✅ |
-| SARIF 2.1.0 (GitHub Code Scanning) | ✅ |
-| 17 unit tests | ✅ |
-| 100% offline — zero external API calls | ✅ |
-| Custom GGUF model support via `models.toml` | ✅ |
+| C, C++, C#/.NET, Rust support | Yes |
+| 50+ static vulnerability patterns | Yes |
+| Local Phi-3 SLM inference via Kalosm | Yes |
+| Function-level chunking for large files | Yes |
+| Confidence scoring (LOW / MEDIUM / HIGH) | Yes |
+| `--min-confidence` filter | Yes |
+| Per-file inference timeout (`--timeout`) | Yes |
+| Terminal colored output | Yes |
+| JSON output (SIEM / XDR pipeable) | Yes |
+| SARIF 2.1.0 (GitHub Code Scanning) | Yes |
+| 17 unit tests | Yes |
+| 100% offline — zero external API calls | Yes |
+| Custom GGUF model support via `models.toml` | Yes |
 
 ---
 
@@ -461,11 +461,11 @@ slm-audit scan ./classified-project/
 
 | Item | Priority | Status |
 |------|----------|--------|
-| SARIF 2.1.0 output | P0 | ✅ Done |
-| `--min-confidence` filter | P0 | ✅ Done |
-| Function-level file chunking | P0 | ✅ Done |
-| Inference timeout (`--timeout`) | P0 | ✅ Done |
-| Unit tests (17 passing) | P0 | ✅ Done |
+| SARIF 2.1.0 output | P0 | Done |
+| `--min-confidence` filter | P0 | Done |
+| Function-level file chunking | P0 | Done |
+| Inference timeout (`--timeout`) | P0 | Done |
+| Unit tests (17 passing) | P0 | Done |
 | Parallel file analysis | P1 | Planned |
 | `--no-llm` static-only mode | P1 | Planned |
 | `.slm-audit-ignore` suppression file | P1 | Planned |
@@ -522,7 +522,7 @@ MIT License — see [LICENSE](LICENSE) for full text.
 
 <img src="assets/logo.avif" alt="slm-audit logo" width="80">
 
-Built with [Kalosm](https://github.com/floneum/floneum) &nbsp;·&nbsp; Powered by [Phi-3-mini](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct) &nbsp;·&nbsp; Written in [Rust](https://www.rust-lang.org) 🦀
+Built with [Kalosm](https://github.com/floneum/floneum) &nbsp;·&nbsp; Powered by [Phi-3-mini](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct) &nbsp;·&nbsp; Written in [Rust](https://www.rust-lang.org)
 
 **[Report an Issue](https://github.com/anubhavg-icpl/slm-l/issues)** &nbsp;·&nbsp; **[anubhavg-icpl](https://github.com/anubhavg-icpl)**
 

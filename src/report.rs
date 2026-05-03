@@ -28,7 +28,7 @@ pub fn print_terminal(results: &[(PathBuf, Language, Vec<Finding>)]) {
         );
 
         if findings.is_empty() {
-            println!("  {}", "✓ No findings".green());
+            println!("  {}", "No findings".green());
             continue;
         }
 
