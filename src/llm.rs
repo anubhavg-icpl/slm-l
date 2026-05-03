@@ -121,7 +121,7 @@ impl AuditModel {
     }
 }
 
-fn correlate_confidence(findings: &mut Vec<Finding>, static_hits: &[StaticHit]) {
+fn correlate_confidence(findings: &mut [Finding], static_hits: &[StaticHit]) {
     for f in findings.iter_mut() {
         if f.confidence == Confidence::High {
             continue;

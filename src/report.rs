@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
 use colored::Colorize;
-use serde_json;
-
 use crate::{detector::Language, llm::Finding};
 
 pub fn print_terminal(results: &[(PathBuf, Language, Vec<Finding>)]) {
