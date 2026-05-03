@@ -5,9 +5,26 @@ use futures::StreamExt;
 use kalosm::language::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{detector::Language, scanner::StaticHit};
+use crate::{chunker, detector::Language, scanner::StaticHit};
 
-const MAX_SOURCE_CHARS: usize = 8_000;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Confidence {
+    #[default]
+    Low,
+    Medium,
+    High,
+}
+
+impl Confidence {
+    pub fn sarif_rank(&self) -> f64 {
+        match self {
+            Confidence::Low => 25.0,
+            Confidence::Medium => 60.0,
+            Confidence::High => 90.0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
@@ -17,6 +34,8 @@ pub struct Finding {
     pub pattern: String,
     pub explanation: String,
     pub suggestion: String,
+    #[serde(default)]
+    pub confidence: Confidence,
 }
 
 pub struct AuditModel {
@@ -38,42 +57,101 @@ impl AuditModel {
         language: Language,
         static_hits: &[StaticHit],
         file: &Path,
+        timeout_secs: u64,
     ) -> anyhow::Result<Vec<Finding>> {
-        let prompt = build_prompt(source, language, static_hits, file);
+        let chunks = chunker::chunk_source(source, language);
+        let mut all_findings: Vec<Finding> = Vec::new();
 
-        let params = GenerationParameters::default().with_max_length(3000);
-        let mut stream = self.llm.complete(&prompt).with_sampler(params);
+        for chunk in &chunks {
+            let chunk_line_count = chunk.content.lines().count();
+            let chunk_hits: Vec<&StaticHit> = static_hits
+                .iter()
+                .filter(|h| {
+                    h.line >= chunk.start_line
+                        && h.line < chunk.start_line + chunk_line_count
+                })
+                .collect();
 
-        // Collect all tokens into a single string
-        let mut response = String::new();
-        while let Some(chunk) = stream.next().await {
-            response.push_str(&chunk);
+            let mut findings =
+                self.analyze_chunk(&chunk.content, language, &chunk_hits, file, timeout_secs)
+                    .await?;
+
+            // Adjust line numbers from chunk-relative to file-absolute
+            let offset = (chunk.start_line as u32).saturating_sub(1);
+            for f in findings.iter_mut() {
+                if let Some(ln) = f.line {
+                    f.line = Some(ln + offset);
+                }
+            }
+
+            // Correlate confidence against static hits (file-absolute lines now)
+            correlate_confidence(&mut findings, static_hits);
+            all_findings.extend(findings);
         }
+
+        Ok(all_findings)
+    }
+
+    async fn analyze_chunk(
+        &self,
+        code: &str,
+        language: Language,
+        static_hits: &[&StaticHit],
+        file: &Path,
+        timeout_secs: u64,
+    ) -> anyhow::Result<Vec<Finding>> {
+        let prompt = build_prompt(code, language, static_hits, file);
+        let params = GenerationParameters::default().with_max_length(3000);
+
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            async move {
+                let mut stream = self.llm.complete(&prompt).with_sampler(params);
+                let mut buf = String::new();
+                while let Some(token) = stream.next().await {
+                    buf.push_str(&token);
+                }
+                buf
+            },
+        )
+        .await
+        .context("LLM inference timed out — increase --timeout")?;
 
         parse_findings(&response)
     }
 }
 
+fn correlate_confidence(findings: &mut Vec<Finding>, static_hits: &[StaticHit]) {
+    for f in findings.iter_mut() {
+        if f.confidence == Confidence::High {
+            continue;
+        }
+        let corroborated = f
+            .line
+            .map(|fl| {
+                static_hits
+                    .iter()
+                    .any(|sh| (sh.line as u32).abs_diff(fl) <= 2)
+            })
+            .unwrap_or(false);
+        f.confidence = if corroborated {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        };
+    }
+}
+
 fn build_prompt(
-    source: &str,
+    code: &str,
     language: Language,
-    static_hits: &[StaticHit],
+    static_hits: &[&StaticHit],
     file: &Path,
 ) -> String {
     let filename = file
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
-
-    let code_excerpt = if source.len() > MAX_SOURCE_CHARS {
-        format!(
-            "{}\n... [truncated at {} chars]",
-            &source[..MAX_SOURCE_CHARS],
-            MAX_SOURCE_CHARS
-        )
-    } else {
-        source.to_string()
-    };
 
     let static_section = if static_hits.is_empty() {
         "None detected.".to_string()
@@ -118,7 +196,7 @@ JSON:"#,
         lang = language.name(),
         filename = filename,
         static_section = static_section,
-        code = code_excerpt,
+        code = code,
     )
 }
 
@@ -127,20 +205,18 @@ fn parse_findings(response: &str) -> anyhow::Result<Vec<Finding>> {
 
     match serde_json::from_str::<Vec<Finding>>(json_str) {
         Ok(findings) => Ok(findings),
-        Err(_) => {
-            // SLM produced non-parseable output — return it as a single INFO finding
-            Ok(vec![Finding {
-                line: None,
-                severity: "INFO".to_string(),
-                category: "parse-error".to_string(),
-                pattern: String::new(),
-                explanation: format!(
-                    "Model response could not be parsed as JSON. Raw output: {}",
-                    &response[..response.len().min(400)]
-                ),
-                suggestion: "Re-run or inspect the file manually.".to_string(),
-            }])
-        }
+        Err(_) => Ok(vec![Finding {
+            line: None,
+            severity: "INFO".to_string(),
+            category: "parse-error".to_string(),
+            pattern: String::new(),
+            explanation: format!(
+                "Model response could not be parsed as JSON. Raw output: {}",
+                &response[..response.len().min(400)]
+            ),
+            suggestion: "Re-run or inspect the file manually.".to_string(),
+            confidence: Confidence::Low,
+        }]),
     }
 }
 
