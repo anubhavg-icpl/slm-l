@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use walkdir::WalkDir;
 
-use crate::{detector::Language, llm::AuditModel, report, scanner};
+use crate::{detector::Language, llm::{AuditModel, Confidence}, report, scanner};
 
 #[derive(Parser)]
 #[command(
     name = "slm-audit",
     about = "Local SLM-powered security auditor for C / C++ / C# / Rust",
+    long_about = "Combines fast static pattern matching with local Phi-3 SLM inference.\nRuns 100% offline — no API keys, no data leaves your machine.",
     version
 )]
 struct Cli {
@@ -22,12 +23,22 @@ enum Commands {
     Scan {
         /// File or directory to audit
         path: PathBuf,
+
         /// Override automatic language detection
         #[arg(long, value_enum)]
         lang: Option<LangArg>,
+
         /// Output format
         #[arg(long, default_value = "terminal", value_enum)]
         format: OutputFormat,
+
+        /// LLM inference timeout in seconds
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+
+        /// Minimum confidence level to include in output
+        #[arg(long, default_value = "low", value_enum)]
+        min_confidence: ConfidenceArg,
     },
 }
 
@@ -43,9 +54,27 @@ pub enum LangArg {
 enum OutputFormat {
     Terminal,
     Json,
+    Sarif,
 }
 
-fn lang_arg_to_language(arg: &LangArg) -> Language {
+#[derive(Clone, ValueEnum)]
+enum ConfidenceArg {
+    Low,
+    Medium,
+    High,
+}
+
+impl From<&ConfidenceArg> for Confidence {
+    fn from(arg: &ConfidenceArg) -> Self {
+        match arg {
+            ConfidenceArg::Low => Confidence::Low,
+            ConfidenceArg::Medium => Confidence::Medium,
+            ConfidenceArg::High => Confidence::High,
+        }
+    }
+}
+
+fn lang_from_arg(arg: &LangArg) -> Language {
     match arg {
         LangArg::C => Language::C,
         LangArg::Cpp => Language::Cpp,
@@ -58,8 +87,13 @@ pub async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Scan { path, lang, format } => {
-            // Collect all target files
+        Commands::Scan {
+            path,
+            lang,
+            format,
+            timeout,
+            min_confidence,
+        } => {
             let files: Vec<PathBuf> = if path.is_file() {
                 vec![path.clone()]
             } else {
@@ -82,12 +116,13 @@ pub async fn run() -> anyhow::Result<()> {
             }
 
             let model = AuditModel::load().await?;
+            let min_conf = Confidence::from(&min_confidence);
             let mut results = Vec::new();
 
             for file in &files {
                 let language = lang
                     .as_ref()
-                    .map(lang_arg_to_language)
+                    .map(lang_from_arg)
                     .or_else(|| Language::from_path(file));
 
                 let Some(language) = language else {
@@ -104,13 +139,19 @@ pub async fn run() -> anyhow::Result<()> {
 
                 eprintln!("Auditing {} [{}]...", file.display(), language.name());
                 let static_hits = scanner::scan(&source, language);
-                let findings = model.analyze(&source, language, &static_hits, file).await?;
+                let mut findings =
+                    model.analyze(&source, language, &static_hits, file, timeout).await?;
+
+                // Apply confidence filter
+                findings.retain(|f| f.confidence >= min_conf);
+
                 results.push((file.clone(), language, findings));
             }
 
             match format {
                 OutputFormat::Terminal => report::print_terminal(&results),
                 OutputFormat::Json => report::print_json(&results)?,
+                OutputFormat::Sarif => report::print_sarif(&results)?,
             }
         }
     }

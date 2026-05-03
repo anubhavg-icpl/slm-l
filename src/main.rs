@@ -1,3 +1,4 @@
+mod chunker;
 mod cli;
 mod detector;
 mod llm;
