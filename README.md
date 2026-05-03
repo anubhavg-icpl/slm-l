@@ -10,7 +10,7 @@
 > 100% offline — no API keys, no telemetry, no code leaves your machine.
 
 [![CI](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
-[![Tests](https://img.shields.io/badge/tests-17%20passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
+[![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024--edition-orange?style=flat-square)](https://www.rust-lang.org)
 [![Model](https://img.shields.io/badge/model-Phi--3--mini--4k-purple?style=flat-square)](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
@@ -98,7 +98,7 @@ Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findi
 | Feature | Status |
 |---------|--------|
 | C, C++, C#/.NET, Rust support | Yes |
-| 50+ static vulnerability patterns | Yes |
+| 84 static vulnerability patterns | Yes |
 | Local Phi-3 SLM inference via Kalosm | Yes |
 | Function-level chunking for large files | Yes |
 | Confidence scoring (LOW / MEDIUM / HIGH) | Yes |
@@ -107,7 +107,7 @@ Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findi
 | Terminal colored output | Yes |
 | JSON output (SIEM / XDR pipeable) | Yes |
 | SARIF 2.1.0 (GitHub Code Scanning) | Yes |
-| 17 unit tests | Yes |
+| 45 unit tests | Yes |
 | 100% offline — zero external API calls | Yes |
 | Custom GGUF model support via `models.toml` | Yes |
 
@@ -115,67 +115,104 @@ Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findi
 
 ## Supported Languages & Patterns
 
-### C — 12 patterns
+### C — 20 patterns
 
 | Pattern | Severity | Vulnerability |
 |---------|----------|---------------|
-| `gets` | CRITICAL | Buffer overflow — no bounds check |
-| `system()` / `popen()` | CRITICAL | Command injection via shell |
-| `strcpy` / `strcat` | HIGH | Buffer overflow |
-| `sprintf` | HIGH | Buffer overflow |
-| `scanf %s` without width | HIGH | Buffer overflow |
-| `printf(user_var)` | HIGH | Format string injection |
-| `malloc` return unchecked | MEDIUM | Null pointer dereference |
-| `memcpy` unchecked size | MEDIUM | Buffer overflow |
-| `rand()` for security | MEDIUM | Cryptographically weak PRNG |
-| `atoi` | LOW | No error detection / overflow |
+| `gets` | CRITICAL | Buffer overflow — no bounds check (CWE-120) |
+| `system()` | CRITICAL | Command injection via shell (CWE-78) |
+| `execl` / `execlp` / `execvp` / `execve` | CRITICAL | Command injection — exec family (CWE-78) |
+| `strcpy` / `strcat` | HIGH | Buffer overflow (CWE-120) |
+| `sprintf` | HIGH | Buffer overflow (CWE-120) |
+| `scanf %s` without width | HIGH | Unbounded stack write (CWE-120) |
+| `printf(user_var)` | HIGH | Format string injection (CWE-134) |
+| `vprintf` / `vsprintf` family | HIGH | Format string injection (CWE-134) |
+| `alloca` | HIGH | Attacker-controlled stack allocation (CWE-121) |
+| `tmpnam` / `tempnam` | HIGH | TOCTOU race on temp files (CWE-377) |
+| `chroot` without `chdir` | HIGH | Jail escape (CWE-243) |
+| `dlopen` | HIGH | Shared-library hijacking (CWE-426) |
+| `mmap` with `PROT_EXEC` | HIGH | Executable memory / shellcode (CWE-114) |
+| `popen` | HIGH | Shell command injection (CWE-78) |
+| `malloc` unchecked | MEDIUM | Null pointer dereference (CWE-476) |
+| `memcpy` unchecked | MEDIUM | Buffer overflow (CWE-120) |
+| `rand()` for security | MEDIUM | Weak PRNG (CWE-338) |
+| `getenv` unchecked | MEDIUM | Attacker-controlled environment (CWE-807) |
+| `atoi` | LOW | No error detection / overflow (CWE-190) |
 
-### C++ — 14 patterns
+### C++ — 19 patterns
 
-Includes all C patterns, plus:
-
-| Pattern | Severity | Vulnerability |
-|---------|----------|---------------|
-| `new[]` without `delete[]` | HIGH | Memory leak / undefined behaviour |
-| `reinterpret_cast` | HIGH | Strict aliasing violation |
-| `throw` in destructor | HIGH | Calls `std::terminate` during unwinding |
-| `const_cast` | MEDIUM | Const contract violation |
-| Raw pointer arithmetic | MEDIUM | Off-by-one / out-of-bounds |
-| C-style casts | LOW | Bypasses C++ type safety |
-
-### C#/.NET — 13 patterns
+Inherits C patterns, plus:
 
 | Pattern | Severity | Vulnerability |
 |---------|----------|---------------|
-| `SqlCommand` + string concatenation | CRITICAL | SQL injection |
-| `string.Format` + SQL keywords | CRITICAL | SQL injection |
-| `Process.Start` + concatenation | CRITICAL | Command injection |
-| `BinaryFormatter` | CRITICAL | Insecure deserialization (RCE) |
-| `LosFormatter` / `ObjectStateFormatter` | CRITICAL | Insecure deserialization |
-| `File.Open(Request.*)` | HIGH | Path traversal |
-| Hardcoded passwords / API keys | HIGH | Credential exposure |
-| `MD5.Create` / `SHA1.Create` | HIGH | Broken cryptography |
-| `new Random()` for security | MEDIUM | Cryptographically weak PRNG |
+| `new[]` without `delete[]` | HIGH | Memory leak / undefined behaviour (CWE-401) |
+| Integer overflow in `new[]` size | HIGH | Undersized allocation (CWE-190) |
+| `delete` on `new[]` pointer | HIGH | Undefined behaviour (CWE-762) |
+| `reinterpret_cast` | HIGH | Strict aliasing violation / UB (CWE-704) |
+| `throw` in destructor | HIGH | `std::terminate` during stack unwind (CWE-703) |
+| `dynamic_cast` result unchecked | MEDIUM | Null pointer dereference (CWE-476) |
+| `const_cast` | MEDIUM | Const contract violation (CWE-704) |
+| `catch(...){}` swallow | MEDIUM | Silent exception suppression (CWE-390) |
+| `memset` on C++ object | MEDIUM | Undefined behaviour on non-trivial type (CWE-119) |
+| Raw pointer arithmetic | MEDIUM | Off-by-one / out-of-bounds (CWE-467) |
+| `std::rand()` for security | MEDIUM | Weak PRNG (CWE-338) |
+| C-style cast | LOW | Bypasses C++ type safety (CWE-704) |
+| `std::move` on lvalue | LOW | Use-after-move state (CWE-416) |
+
+### C#/.NET — 25 patterns
+
+| Pattern | Severity | Vulnerability |
+|---------|----------|---------------|
+| `SqlCommand` + string concatenation | CRITICAL | SQL injection (CWE-89) |
+| `string.Format` + SQL keywords | CRITICAL | SQL injection (CWE-89) |
+| `Process.Start` + concatenation | CRITICAL | Command injection (CWE-78) |
+| `BinaryFormatter` | CRITICAL | Insecure deserialization / RCE (CWE-502) |
+| `LosFormatter` / `ObjectStateFormatter` | CRITICAL | Insecure deserialization (CWE-502) |
+| `SoapFormatter` / `NetDataContractSerializer` | CRITICAL | Insecure deserialization / RCE (CWE-502) |
+| `TypeNameHandling.All/Objects/Auto` | CRITICAL | Newtonsoft JSON RCE (CWE-502) |
+| `DirectorySearcher` + concatenation | CRITICAL | LDAP injection (CWE-90) |
+| `SelectNodes` / `SelectSingleNode` + concat | CRITICAL | XPath injection (CWE-643) |
+| `Response.Write` with request data | HIGH | Cross-site scripting / XSS (CWE-79) |
+| `File.Open(Request.*)` | HIGH | Path traversal (CWE-22) |
+| `Response.Redirect(userUrl)` | HIGH | Open redirect (CWE-601) |
+| Hardcoded passwords / API keys | HIGH | Credential exposure (CWE-798) |
+| Hardcoded connection strings | HIGH | Database credential exposure (CWE-798) |
+| `MD5.Create` / `SHA1.Create` | HIGH | Broken cryptography (CWE-327) |
+| `DESCryptoServiceProvider` / `RC2` | HIGH | Broken cipher (CWE-327) |
+| `CipherMode.ECB` | HIGH | ECB leaks plaintext patterns (CWE-327) |
+| `ServerCertificateValidationCallback` | HIGH | TLS certificate bypass (CWE-295) |
+| WebClient / HttpClient with user URL | HIGH | SSRF (CWE-918) |
+| `new Random()` for security | MEDIUM | Weak PRNG (CWE-338) |
 | `unsafe {}` block | MEDIUM | CLR memory safety bypass |
-| `XmlDocument` / `XmlTextReader` | MEDIUM | XXE injection |
-| `Assembly.Load` / `.Invoke` | MEDIUM | Reflection code injection |
-| `new Regex(user_input)` | LOW | ReDoS |
+| `XmlDocument` / `XmlTextReader` | MEDIUM | XXE injection (CWE-611) |
+| `Assembly.Load` / `.Invoke` | MEDIUM | Reflection code injection (CWE-470) |
+| `new HttpCookie` | MEDIUM | Missing HttpOnly / Secure flags (CWE-1004) |
+| `new Regex(user_input)` | LOW | ReDoS (CWE-1333) |
 
-### Rust — 11 patterns
+### Rust — 20 patterns
 
 | Pattern | Severity | Vulnerability |
 |---------|----------|---------------|
-| `std::mem::transmute` | HIGH | Type reinterpretation / undefined behaviour |
-| `from_raw_parts` | HIGH | Unsafe slice construction |
-| Raw pointer dereference | HIGH | Null / dangling pointer |
-| `unsafe impl Send/Sync` | HIGH | False thread-safety guarantee |
+| `unsafe impl Send/Sync` | HIGH | False thread-safety assertion (CWE-362) |
+| `std::mem::transmute` | HIGH | Type reinterpretation / UB (CWE-843) |
+| `String::from_utf8_unchecked` | HIGH | Invalid UTF-8 is immediate UB |
+| `slice::from_raw_parts` | HIGH | Unsafe slice — validity must be proven |
+| `slice::from_raw_parts_mut` | HIGH | Exclusive access required — aliasing is UB |
+| `Box::from_raw` | HIGH | UAF / double-free if misused (CWE-416) |
+| `NonNull::new_unchecked` | HIGH | Null pointer is immediate UB (CWE-476) |
+| `CStr::from_ptr` | HIGH | Requires non-null, nul-terminated, valid ptr |
+| `ptr::read` / `ptr::write` | HIGH | Bypasses ownership / aliasing rules |
+| `.assume_init()` | HIGH | Uninitialized memory UB (CWE-908) |
+| `Vec::set_len` | HIGH | Elements must be initialized (CWE-908) |
+| Raw pointer dereference | HIGH | Null / dangling pointer (CWE-476) |
+| Hardcoded `const` secret / key | HIGH | Credential exposure (CWE-798) |
 | `unsafe {}` block | MEDIUM | Opt-out of memory safety |
-| `mem::forget` | MEDIUM | Resource leak (skips `Drop`) |
+| `mem::forget` | MEDIUM | Resource leak — skips `Drop` |
 | FFI `extern "C"` block | MEDIUM | Cross-boundary invariant violations |
-| `as` numeric casts | LOW | Silent integer truncation |
-| `.unwrap()` | LOW | Panic on `None` / `Err` |
-| `.expect("...")` | LOW | Panic with message |
-| `std::env::var` / `args` | LOW | Attacker-controlled input |
+| `.unwrap()` | LOW | Panic on `None` / `Err` (CWE-390) |
+| `.expect("...")` | LOW | Panic with message (CWE-390) |
+| `as` numeric cast | LOW | Silent truncation (CWE-197) |
+| `std::env::var` / `args` | LOW | Attacker-controlled input (CWE-807) |
 
 ---
 
@@ -465,7 +502,7 @@ slm-audit scan ./classified-project/
 | `--min-confidence` filter | P0 | Done |
 | Function-level file chunking | P0 | Done |
 | Inference timeout (`--timeout`) | P0 | Done |
-| Unit tests (17 passing) | P0 | Done |
+| Unit tests (45 passing) | P0 | Done |
 | Parallel file analysis | P1 | Planned |
 | `--no-llm` static-only mode | P1 | Planned |
 | `.slm-audit-ignore` suppression file | P1 | Planned |
