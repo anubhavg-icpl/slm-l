@@ -1,13 +1,23 @@
 # slm-audit model configuration
-# First run auto-downloads the selected model from HuggingFace via kalosm
+# First run auto-downloads the selected model from HuggingFace via kalosm.
+# Models are cached at ~/.cache/kalosm/ and reused automatically.
+#
+# Presets:
+#   "phi3"          - Phi-3-mini-4k-instruct    (~2.2 GB, strong code/reasoning)
+#   "smollm2-135m"  - SmolLM2-135M-Instruct      (~100 MB, fastest, minimal RAM)
+#   "smollm2-360m"  - SmolLM2-360M-Instruct      (~250 MB, default, good speed/quality balance)
+#   "smollm2-1.7b"  - SmolLM2-1.7B-Instruct       (~1.1 GB, best SmolLM quality)
+#   "llama3.2-1b"   - Llama-3.2-1B-Instruct       (~0.8 GB)
+#   "llama3.2-3b"   - Llama-3.2-3B-Instruct       (~2.0 GB)
+#   "qwen2.5-0.5b"  - Qwen2.5-0.5B-Instruct       (~0.5 GB)
+#   "qwen2.5-1.5b"  - Qwen2.5-1.5B-Instruct       (~1.0 GB)
+#   "qwen2.5-3b"    - Qwen2.5-3B-Instruct         (~1.8 GB, strong code analysis)
+#   "custom"        - Use [model.custom] below
 
 [model]
-# Presets:
-#   "phi3"   - Phi-3-mini-4k-instruct (~2.2GB, recommended, strong at code/reasoning)
-#   "llama3" - Llama-3.2-3B-Instruct  (~1.9GB, lighter alternative)
-preset = "phi3"
+preset = "smollm2-360m"
 
 # To use a custom GGUF model, set preset = "custom" and fill in:
 # [model.custom]
-# repo_id  = "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF"
-# filename = "qwen2.5-coder-3b-instruct-q4_k_m.gguf"
+# repo_id  = "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF"
+# filename = "smollm2-1.7b-instruct-q4_k_m.gguf"
