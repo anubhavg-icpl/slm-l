@@ -220,7 +220,7 @@ impl AuditModel {
         timeout_secs: u64,
     ) -> anyhow::Result<Vec<Finding>> {
         let prompt = build_prompt(code, language, static_hits, file);
-        let params = GenerationParameters::default().with_max_length(3000);
+        let params = GenerationParameters::default().with_max_length(2048);
 
         let response =
             tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async move {
@@ -228,6 +228,10 @@ impl AuditModel {
                 let mut buf = String::new();
                 while let Some(token) = stream.next().await {
                     buf.push_str(&token);
+                    // Early-stop once the top-level JSON array is balanced.
+                    if is_complete_json_array(&buf) {
+                        break;
+                    }
                 }
                 buf
             })
@@ -259,12 +263,12 @@ fn correlate_confidence(findings: &mut [Finding], static_hits: &[StaticHit]) {
     }
 }
 
-fn build_prompt(code: &str, language: Language, static_hits: &[&StaticHit], file: &Path) -> String {
-    let filename = file
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-
+fn build_prompt(
+    code: &str,
+    language: Language,
+    static_hits: &[&StaticHit],
+    _file: &Path,
+) -> String {
     let static_section = if static_hits.is_empty() {
         "None detected.".to_string()
     } else {
@@ -281,32 +285,27 @@ fn build_prompt(code: &str, language: Language, static_hits: &[&StaticHit], file
     };
 
     format!(
-        r#"You are an expert security code auditor. Analyze the following {lang} source file for security vulnerabilities.
-Return ONLY a valid JSON array of findings. No markdown. No prose. No code fences.
+        r#"<|im_start|>system
+You are a security code analyzer. Output ONLY a JSON array of vulnerabilities. No explanation.<|im_end|>
+<|im_start|>user
+Find security vulnerabilities in this {lang} code.
 
-Static pre-scan results for {filename}:
+Static scan found:
 {static_section}
 
-File: {filename}
-Language: {lang}
-
-```
+Code:
 {code}
-```
 
-Each finding in the JSON array must have exactly these fields:
-  "line"        : integer line number, or null if not applicable
-  "severity"    : one of "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"
-  "category"    : short vulnerability category (e.g. "buffer-overflow", "sql-injection")
-  "pattern"     : the specific code construct or API that is dangerous
-  "explanation" : concise explanation of why this is a security risk
-  "suggestion"  : concrete safe alternative or fix
+Rules:
+- Output a JSON array, nothing else
+- Each element: {{"line": <int>, "severity": "CRITICAL"|"HIGH"|"MEDIUM"|"LOW", "category": "<vuln-name>", "pattern": "<dangerous-code>", "explanation": "<why-dangerous>", "suggestion": "<how-to-fix>"}}
+- If clean, output []
 
-If no vulnerabilities exist, return: []
-
-JSON:"#,
+Example output:
+[{{"line":1,"severity":"CRITICAL","category":"buffer-overflow","pattern":"gets(buf)","explanation":"gets() has no bounds checking","suggestion":"Use fgets() with size limit"}}]<|im_end|>
+<|im_start|>assistant
+"#,
         lang = language.name(),
-        filename = filename,
         static_section = static_section,
         code = code,
     )
@@ -315,29 +314,222 @@ JSON:"#,
 fn parse_findings(response: &str) -> anyhow::Result<Vec<Finding>> {
     let json_str = extract_json_array(response).unwrap_or(response);
 
-    match serde_json::from_str::<Vec<Finding>>(json_str) {
-        Ok(findings) => Ok(findings),
-        Err(_) => Ok(vec![Finding {
-            line: None,
-            severity: "INFO".to_string(),
-            category: "parse-error".to_string(),
-            pattern: String::new(),
-            explanation: format!(
-                "Model response could not be parsed as JSON. Raw output: {}",
-                &response[..response.len().min(400)]
-            ),
-            suggestion: "Re-run or inspect the file manually.".to_string(),
-            confidence: Confidence::Low,
-        }]),
+    // First attempt: strict JSON parse (works when model output is clean)
+    if let Ok(findings) = serde_json::from_str::<Vec<Finding>>(json_str) {
+        return Ok(findings);
     }
+
+    // Second attempt: regex-based field extraction.
+    // SmolLM2-1.7B on CPU frequently produces near-valid JSON with
+    // formatting errors (unquoted keys, unescaped inner quotes, missing
+    // commas). Regex extraction is resilient to these variations.
+    let findings = extract_findings_regex(json_str);
+    if !findings.is_empty() {
+        return Ok(findings);
+    }
+
+    // All attempts failed
+    Ok(vec![Finding {
+        line: None,
+        severity: "INFO".to_string(),
+        category: "parse-error".to_string(),
+        pattern: String::new(),
+        explanation: format!(
+            "Model response could not be parsed as JSON. Raw output: {}",
+            &response[..response.len().min(400)]
+        ),
+        suggestion: "Re-run or inspect the file manually.".to_string(),
+        confidence: Confidence::Low,
+    }])
 }
 
+/// Regex-based extraction of finding fields from raw model output.
+/// Extracts each `{...}` block, then pulls fields by pattern-matching.
+/// Tolerant of unquoted keys, missing commas, and formatting errors.
+fn extract_findings_regex(s: &str) -> Vec<Finding> {
+    let re_line = regex::Regex::new(r#"(?:line|Line)\s*[:=]?\s*(\d+)"#).unwrap();
+    let mut findings = Vec::new();
+
+    let objects = split_json_objects(s);
+    for obj in &objects {
+        let line = extract_json_field(obj, "line")
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .or_else(|| re_line.captures(obj).and_then(|c| c[1].parse::<u32>().ok()));
+
+        let severity = extract_json_field(obj, "severity").unwrap_or_else(|| "MEDIUM".to_string());
+
+        let category = extract_json_field(obj, "category")
+            .or_else(|| extract_json_field(obj, "type"))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let pattern = extract_json_field(obj, "pattern").unwrap_or_default();
+
+        let explanation = extract_json_field(obj, "explanation")
+            .or_else(|| extract_json_field(obj, "risk"))
+            .or_else(|| extract_json_field(obj, "description"))
+            .unwrap_or_default();
+
+        let suggestion = extract_json_field(obj, "suggestion")
+            .or_else(|| extract_json_field(obj, "fix"))
+            .unwrap_or_default();
+
+        if category == "unknown" && pattern.is_empty() && explanation.is_empty() {
+            continue;
+        }
+
+        findings.push(Finding {
+            line,
+            severity,
+            category,
+            pattern,
+            explanation,
+            suggestion,
+            confidence: Confidence::Medium,
+        });
+    }
+
+    findings
+}
+
+/// Split a JSON array string into individual object substrings.
+/// Tolerant of braces inside string literals.
+fn split_json_objects(s: &str) -> Vec<String> {
+    let mut objects = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] != '{' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escape = false;
+
+        while i < chars.len() {
+            let c = chars[i];
+            if escape {
+                escape = false;
+                i += 1;
+                continue;
+            }
+            if c == '\\' {
+                escape = true;
+                i += 1;
+                continue;
+            }
+            if c == '"' {
+                in_string = !in_string;
+                i += 1;
+                continue;
+            }
+            if !in_string {
+                if c == '{' {
+                    depth += 1;
+                } else if c == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        objects.push(chars[start..=i].iter().collect());
+                        break;
+                    }
+                }
+            }
+            i += 1;
+        }
+        if depth != 0 {
+            objects.push(chars[start..].iter().collect());
+        }
+        i += 1;
+    }
+
+    objects
+}
+
+/// Extract a quoted string value for a given field name from a JSON-like
+/// object string. Handles: "key":"val", key:"val", key:"val", "key": "val"
+fn extract_json_field(obj: &str, field: &str) -> Option<String> {
+    let pattern = format!(r#""?{}"?\s*[:=]\s*"(?:\\"|[^"])*""#, regex::escape(field));
+    let re = regex::Regex::new(&pattern).ok()?;
+    let m = re.find(obj)?;
+    let val = m.as_str();
+    let start = val.find('"')? + 1;
+    let end = val.rfind('"')?;
+    if start >= end {
+        return None;
+    }
+    Some(val[start..end].replace("\\\"", "\"").replace("\\\\", "\\"))
+}
+
+/// Check whether the buffer contains a complete top-level JSON array.
+fn is_complete_json_array(buf: &str) -> bool {
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape = false;
+    let mut found_open = false;
+
+    for ch in buf.chars() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if ch == '\\' {
+            escape = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if ch == '[' {
+            depth += 1;
+            found_open = true;
+        } else if ch == ']' {
+            depth -= 1;
+            if found_open && depth == 0 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Extract the first JSON array span from the response string.
 fn extract_json_array(s: &str) -> Option<&str> {
     let start = s.find('[')?;
-    let end = s.rfind(']')? + 1;
-    if start < end {
-        Some(&s[start..end])
-    } else {
-        None
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (i, ch) in s.chars().enumerate().skip(start) {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if ch == '\\' {
+            escape = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if ch == '[' {
+            depth += 1;
+        } else if ch == ']' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(&s[start..=i]);
+            }
+        }
     }
+    // Fallback: return everything from first [ to end
+    Some(&s[start..])
 }

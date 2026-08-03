@@ -36,8 +36,8 @@ enum Commands {
         #[arg(long, default_value = "terminal", value_enum)]
         format: OutputFormat,
 
-        /// LLM inference timeout in seconds
-        #[arg(long, default_value_t = 60)]
+        /// LLM inference timeout in seconds (SmolLM2-1.7B on CPU may need 120-300s)
+        #[arg(long, default_value_t = 180)]
         timeout: u64,
 
         /// Minimum confidence level to include in output
