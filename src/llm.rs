@@ -38,16 +38,136 @@ pub struct Finding {
     pub confidence: Confidence,
 }
 
+// ── Model configuration (models.toml) ──────────────────────────────────────
+
+/// Deserialized representation of `models.toml`.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ModelConfig {
+    #[serde(default)]
+    pub model: ModelSection,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelSection {
+    /// One of: "phi3", "smollm2-135m", "smollm2-360m", "smollm2-1.7b",
+    /// "llama3.2-1b", "llama3.2-3b", "qwen2.5-0.5b", "qwen2.5-1.5b",
+    /// "qwen2.5-3b", or "custom".
+    #[serde(default)]
+    pub preset: Option<String>,
+
+    /// Optional custom model definition. Used when `preset = "custom"`.
+    #[serde(default)]
+    pub custom: Option<CustomModel>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomModel {
+    pub repo_id: String,
+    pub filename: String,
+}
+
+impl Default for ModelSection {
+    fn default() -> Self {
+        Self {
+            preset: Some("phi3".to_string()),
+            custom: None,
+        }
+    }
+}
+
+/// Load `models.toml` from the project root (or CWD). Falls back to
+/// the default preset if the file is missing or unreadable.
+fn load_model_config() -> ModelConfig {
+    let mut candidates: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from("models.toml")];
+    if let Ok(p) = std::env::var("SLM_AUDIT_CONFIG") {
+        candidates.push(std::path::PathBuf::from(p));
+    }
+    for path in &candidates {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(cfg) = toml::from_str::<ModelConfig>(&text)
+        {
+            return cfg;
+        }
+    }
+    ModelConfig::default()
+}
+
+/// Resolve the `LlamaSource` for the configured preset.
+fn source_for_preset(preset: &str, custom: Option<&CustomModel>) -> anyhow::Result<LlamaSource> {
+    match preset {
+        "phi3" => Ok(LlamaSource::phi_3_mini_4k_instruct()),
+        "smollm2-135m" => Ok(LlamaSource::new(FileSource::huggingface(
+            "HuggingFaceTB/SmolLM2-135M-Instruct-GGUF",
+            "main",
+            "smollm2-135m-instruct-q4_k_m.gguf",
+        ))),
+        "smollm2-360m" => Ok(LlamaSource::new(FileSource::huggingface(
+            "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",
+            "main",
+            "smollm2-360m-instruct-q4_k_m.gguf",
+        ))),
+        "smollm2-1.7b" => Ok(LlamaSource::new(FileSource::huggingface(
+            "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",
+            "main",
+            "smollm2-1.7b-instruct-q4_k_m.gguf",
+        ))),
+        "llama3.2-1b" => Ok(LlamaSource::llama_3_2_1b_chat()),
+        "llama3.2-3b" => Ok(LlamaSource::llama_3_2_3b_chat()),
+        "qwen2.5-0.5b" => Ok(LlamaSource::qwen_2_5_0_5b_instruct()),
+        "qwen2.5-1.5b" => Ok(LlamaSource::qwen_2_5_1_5b_instruct()),
+        "qwen2.5-3b" => Ok(LlamaSource::qwen_2_5_3b_instruct()),
+        "custom" => {
+            let c = custom.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "preset = \"custom\" requires a [model.custom] section \
+                     with repo_id and filename in models.toml"
+                )
+            })?;
+            Ok(LlamaSource::new(FileSource::huggingface(
+                &c.repo_id,
+                "main",
+                &c.filename,
+            )))
+        }
+        other => Err(anyhow::anyhow!(
+            "Unknown model preset '{other}'. \
+             Valid presets: phi3, smollm2-135m, smollm2-360m, smollm2-1.7b, \
+             llama3.2-1b, llama3.2-3b, qwen2.5-0.5b, qwen2.5-1.5b, qwen2.5-3b, custom"
+        )),
+    }
+}
+
 pub struct AuditModel {
     llm: Llama,
 }
 
 impl AuditModel {
     pub async fn load() -> anyhow::Result<Self> {
-        eprintln!("Loading model (first run downloads ~2.2 GB, cached afterward)...");
-        let llm = Llama::phi_3()
+        let cfg = load_model_config();
+        let preset = cfg.model.preset.as_deref().unwrap_or("phi3");
+        let source = source_for_preset(preset, cfg.model.custom.as_ref())?;
+
+        let size_hint = match preset {
+            "phi3" => "~2.2 GB",
+            "smollm2-135m" => "~100 MB",
+            "smollm2-360m" => "~250 MB",
+            "smollm2-1.7b" => "~1.1 GB",
+            "llama3.2-1b" => "~0.8 GB",
+            "llama3.2-3b" => "~2.0 GB",
+            "qwen2.5-0.5b" => "~0.5 GB",
+            "qwen2.5-1.5b" => "~1.0 GB",
+            "qwen2.5-3b" => "~1.8 GB",
+            _ => "(size unknown)",
+        };
+
+        eprintln!("Loading model '{preset}' ({size_hint}, cached after first download)...");
+        let llm = Llama::builder()
+            .with_source(source)
+            .build()
             .await
-            .context("Failed to load Phi-3 model — check network or disk space")?;
+            .with_context(|| {
+                format!("Failed to load model '{preset}' — check network or disk space")
+            })?;
         Ok(Self { llm })
     }
 
@@ -67,14 +187,13 @@ impl AuditModel {
             let chunk_hits: Vec<&StaticHit> = static_hits
                 .iter()
                 .filter(|h| {
-                    h.line >= chunk.start_line
-                        && h.line < chunk.start_line + chunk_line_count
+                    h.line >= chunk.start_line && h.line < chunk.start_line + chunk_line_count
                 })
                 .collect();
 
-            let mut findings =
-                self.analyze_chunk(&chunk.content, language, &chunk_hits, file, timeout_secs)
-                    .await?;
+            let mut findings = self
+                .analyze_chunk(&chunk.content, language, &chunk_hits, file, timeout_secs)
+                .await?;
 
             // Adjust line numbers from chunk-relative to file-absolute
             let offset = (chunk.start_line as u32).saturating_sub(1);
@@ -103,19 +222,17 @@ impl AuditModel {
         let prompt = build_prompt(code, language, static_hits, file);
         let params = GenerationParameters::default().with_max_length(3000);
 
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            async move {
+        let response =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async move {
                 let mut stream = self.llm.complete(&prompt).with_sampler(params);
                 let mut buf = String::new();
                 while let Some(token) = stream.next().await {
                     buf.push_str(&token);
                 }
                 buf
-            },
-        )
-        .await
-        .context("LLM inference timed out — increase --timeout")?;
+            })
+            .await
+            .context("LLM inference timed out — increase --timeout")?;
 
         parse_findings(&response)
     }
@@ -142,12 +259,7 @@ fn correlate_confidence(findings: &mut [Finding], static_hits: &[StaticHit]) {
     }
 }
 
-fn build_prompt(
-    code: &str,
-    language: Language,
-    static_hits: &[&StaticHit],
-    file: &Path,
-) -> String {
+fn build_prompt(code: &str, language: Language, static_hits: &[&StaticHit], file: &Path) -> String {
     let filename = file
         .file_name()
         .and_then(|n| n.to_str())
