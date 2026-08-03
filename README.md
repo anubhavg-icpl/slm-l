@@ -4,7 +4,7 @@
 
 # slm-audit
 
-**Local SLM-powered multi-language security code auditor**
+**Why your SAST tool needs AI — and how to run it without the cloud.**
 
 > Combines deterministic static analysis with on-device SmolLM2 inference.<br>
 > 100% offline — no API keys, no telemetry, no code leaves your machine.
@@ -27,38 +27,83 @@
 
 ## Contents
 
-- [Overview](#overview)
-- [How It Works](#how-it-works)
-- [Features](#features)
-- [Supported Languages & Patterns](#supported-languages--patterns)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-- [Output Formats](#output-formats)
-- [Model Configuration](#model-configuration)
+- [Why SAST Needs AI](#why-sast-needs-ai) — the problem this solves
+- [How It Works](#how-it-works) — the two-layer architecture
+- [Quick Start](#quick-start) — get running in 60 seconds
+- [Usage](#usage) — CLI reference and examples
+- [Output Formats](#output-formats) — terminal, JSON, SARIF 2.1.0
+- [Model Configuration](#model-configuration) — SmolLM2 presets and custom models
+- [Supported Languages & Patterns](#supported-languages--patterns) — 84 patterns, 4 languages
 - [CI / GitHub Code Scanning Integration](#ci--github-code-scanning-integration)
-- [Production Deployment](#production-deployment)
+- [Production Deployment](#production-deployment) — air-gap, performance, requirements
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
 ---
 
-## Overview
+## Why SAST Needs AI
 
-`slm-audit` is a command-line security scanner built entirely in Rust that audits **C, C++, C#/.NET, and Rust** source code for security vulnerabilities — without sending a single byte to the cloud.
+Traditional static analysis (SAST) tools have a fundamental blind spot: **they understand syntax, not semantics.**
 
-Unlike SaaS SAST tools, `slm-audit` runs a local small language model (SmolLM2-1.7B, ~1.1 GB) directly on your hardware:
+A regex can tell you that `strcpy` appears on line 42. It cannot tell you whether the source buffer is bounded, whether the destination is heap or stack, whether the length was validated three functions ago, or whether the input is even attacker-controlled. Every developer who has used SonarQube, Semgrep, or CodeQL knows the result: hundreds of findings, most of them false positives, buried under noise until the team learns to ignore the scanner entirely.
 
-- **Air-gapped friendly** — works in isolated, classified, or regulatory-constrained environments
-- **Zero data exfiltration risk** — proprietary source code never touches an external API
-- **Semantic understanding** — the SLM catches logic-level vulnerabilities that regex alone misses
-- **Two-layer detection** — fast static pre-scan feeds context into the SLM for deeper analysis
-- **Confidence scoring** — findings corroborated by both layers surface as `HIGH` confidence
-- **SARIF 2.1.0 output** — integrates natively with GitHub Code Scanning and VS Code
+**slm-audit closes this gap with a small language model that reads the code the way a human reviewer would.**
+
+### What regex sees vs. what the SLM sees
+
+```c
+// Regex flags this as: "strcpy → HIGH severity, CWE-120"
+// SLM sees: destination is 64 bytes on stack, source is attacker-controlled
+//           network input with no length check → CRITICAL, exploitable.
+void handle_request(char *user_input) {
+    char buf[64];
+    strcpy(buf, user_input);
+}
+```
+
+```c
+// Regex flags this as: "strcpy → HIGH severity, CWE-120"
+// SLM sees: destination is dynamically sized to source length + 1.
+//           No overflow possible → LOW risk, not a real finding.
+void safe_copy(const char *src) {
+    char *buf = malloc(strlen(src) + 1);
+    strcpy(buf, src);
+}
+```
+
+Both fragments contain `strcpy`. Only the first is dangerous. A regex cannot tell them apart. The SLM can.
+
+### Why not just use ChatGPT?
+
+Because your source code is proprietary, regulated, classified, or covered by an NDA. Sending it to a third-party API is a data breach waiting to happen. `slm-audit` runs the model **on your machine** — your code never leaves the process. No API keys, no network calls, no telemetry, no data exfiltration risk.
+
+| Approach | Accuracy | Privacy | Speed | Cost |
+|----------|----------|---------|-------|------|
+| Regex-only SAST (Semgrep, etc.) | Low (syntax only) | Local | Fast | Free |
+| Cloud LLM SAST (ChatGPT, Claude) | High | **Code leaves your machine** | Network latency | Per-query |
+| **slm-audit** (local SLM) | **High** (semantic) | **100% local** | 2–30 s/file | Free |
+
+### Why SmolLM2?
+
+SmolLM2-1.7B-Instruct (Hugging Face, Apache 2.0) was chosen after evaluating every model in the SmolLM family for CPU-based security analysis:
+
+| | SmolLM2-135M | SmolLM2-360M | **SmolLM2-1.7B** | SmolLM3-3B |
+|---|---|---|---|---|
+| IFEval (instruction following) | 29.9 | 41.0 | **56.7** | 76.7 |
+| ARC (reasoning) | 37.3 | 43.7 | **51.7** | 65.6 |
+| Training tokens | 2T | 4T | **11T** | 11T |
+| Size (Q4_K_M GGUF) | ~90 MB | ~250 MB | **~1.1 GB** | ~1.9 GB |
+| CPU RAM | ~0.5 GB | ~1 GB | **~2.5 GB** | ~4 GB |
+| kalosm compatible | Yes | Yes | **Yes** | Untested (custom arch) |
+
+SmolLM2-1.7B is the sweet spot: trained on 11T tokens including The Stack (code), IFEval 56.7 for reliable structured JSON output, and small enough to run on any laptop. SmolLM3-3B is objectively better but uses a custom `smollm3` architecture that may not load in kalosm's Llama builder.
 
 ---
 
 ## How It Works
+
+`slm-audit` uses a **two-layer detection pipeline**. The static layer is fast and deterministic. The SLM layer is slower but understands context. Findings confirmed by both layers get `HIGH` confidence.
 
 ```mermaid
 flowchart TD
@@ -82,39 +127,199 @@ flowchart TD
     O --> P[terminal / JSON / SARIF]
 ```
 
-### Two-Layer Detection
+### Layer 1: Static Pre-Scanner
 
-| Layer | Speed | Scope |
-|-------|-------|-------|
-| Static regex pre-scan | < 100 ms | Known dangerous APIs and patterns |
-| SLM semantic analysis | 2–30 s | Logic, data flow, contextual risk |
+84 handcrafted regex patterns cover the most dangerous APIs across C, C++, C#/.NET, and Rust. Each pattern is mapped to a CWE, severity level, and human-readable remediation guidance. Runs in under 100 ms per file.
 
-Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findings receive `confidence: MEDIUM`.
+### Layer 2: SLM Semantic Analysis
+
+The static hits are fed into the prompt as context alongside the source code. The SmolLM2 model analyzes the code with awareness of data flow, control flow, and the specific vulnerability patterns already flagged. It returns structured JSON findings with explanations and fix suggestions.
+
+### Confidence Scoring
+
+| Confidence | Meaning | How to use |
+|------------|---------|------------|
+| **HIGH** | Both static scan and SLM agree on this finding | Act on these first |
+| **MEDIUM** | SLM-only finding, or static hit in `--static-only` mode | Review manually |
+| **LOW** | SLM could not parse output, or uncorrelated finding | Informational |
+
+Use `--min-confidence high` for CI gates. Use `--min-confidence low` for thorough audits.
 
 ---
 
-## Features
+## Quick Start
 
-| Feature | Status |
-|---------|--------|
-| C, C++, C#/.NET, Rust support | Yes |
-| 84 static vulnerability patterns | Yes |
-| Local SmolLM2 SLM inference via Kalosm | Yes |
-| Function-level chunking for large files | Yes |
-| Confidence scoring (LOW / MEDIUM / HIGH) | Yes |
-| `--min-confidence` filter | Yes |
-| Per-file inference timeout (`--timeout`) | Yes |
-| Terminal colored output | Yes |
-| JSON output (SIEM / XDR pipeable) | Yes |
-| SARIF 2.1.0 (GitHub Code Scanning) | Yes |
-| 45 unit tests | Yes |
-| 100% offline — zero external API calls | Yes |
-| Configurable model presets via `models.toml` | Yes |
-| Custom GGUF model support via `models.toml` | Yes |
+### Prerequisites
+
+| Requirement | Version |
+|-------------|---------|
+| Rust toolchain | 1.75+ |
+| Free disk space | ~1.5 GB (model cache) |
+| RAM | 4 GB minimum |
+| Internet access | First run only (model download) |
+
+### Build
+
+```bash
+git clone https://github.com/anubhavg-icpl/slm-l.git
+cd slm-l
+cargo build --release
+```
+
+### First Run
+
+```bash
+# Scan a C file — downloads SmolLM2-1.7B (~1.1 GB) on first run
+./target/release/slm-audit scan ./myproject/main.c
+```
+
+The model is cached at `~/.cache/kalosm/` and reused automatically.
+
+### Fast Triage (No Model Download)
+
+```bash
+# Static patterns only — no AI, no download, runs in milliseconds
+./target/release/slm-audit scan ./src/ --static-only
+```
+
+---
+
+## Usage
+
+```
+slm-audit scan <PATH> [OPTIONS]
+
+Arguments:
+  <PATH>                  File or directory to audit
+
+Options:
+  --lang <LANG>           Override language detection [c|cpp|cs|rust]
+  --format <FORMAT>       Output format [terminal|json|sarif]  [default: terminal]
+  --timeout <SECS>        LLM inference timeout per file       [default: 60]
+  --min-confidence <LVL>  Minimum confidence to report         [default: low]
+                          [possible values: low, medium, high]
+  --static-only           Skip LLM inference (fast, no model download)
+  -h, --help              Print help
+  -V, --version           Print version
+```
+
+### Examples
+
+```bash
+# Audit a directory, all findings
+slm-audit scan ./src/
+
+# HIGH-confidence only (confirmed by both static scan and SLM)
+slm-audit scan ./src/ --min-confidence high
+
+# JSON output — pipe to jq for CRITICAL findings
+slm-audit scan ./src/ --format json \
+  | jq '.[] | .findings[] | select(.severity == "CRITICAL")'
+
+# SARIF for GitHub Code Scanning
+slm-audit scan ./src/ --format sarif > results.sarif
+
+# Large C++ project with extended timeout
+slm-audit scan ./engine/ --lang cpp --timeout 120
+
+# Static-only fast scan (no model download needed)
+slm-audit scan ./src/ --static-only --format json
+```
+
+---
+
+## Output Formats
+
+### Terminal
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+slm-audit — 3 file(s), 7 finding(s)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[C] src/parser.c
+
+  [CRITICAL] buffer-overflow line 42 [high]
+  Pattern   : gets(
+  Risk      : gets() has no bounds checking — guaranteed buffer overflow.
+  Fix       : Use fgets(buf, sizeof(buf), stdin) with explicit size.
+
+  [HIGH]    format-string line 78 [medium]
+  Pattern   : printf(user_input)
+  Risk      : User-controlled format string enables arbitrary reads/writes.
+  Fix       : Always use printf("%s", user_input).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Summary  CRITICAL:1  HIGH:3  MEDIUM:2  LOW:1
+```
+
+### JSON
+
+Structured output for SIEM, XDR, or custom dashboards:
+
+```json
+[
+  {
+    "file": "src/parser.c",
+    "language": "C",
+    "findings": [
+      {
+        "line": 42,
+        "severity": "CRITICAL",
+        "category": "buffer-overflow",
+        "pattern": "gets(",
+        "explanation": "gets() has no bounds checking — guaranteed buffer overflow.",
+        "suggestion": "Use fgets(buf, sizeof(buf), stdin) with explicit size.",
+        "confidence": "HIGH"
+      }
+    ]
+  }
+]
+```
+
+### SARIF 2.1.0
+
+Standard format for GitHub Code Scanning, VS Code, and most IDE security plugins:
+
+```bash
+slm-audit scan ./src/ --format sarif > results.sarif
+```
+
+SARIF output includes rule definitions, severity-to-level mapping, confidence-to-rank mapping, and fix suggestions in `fixes[]` arrays.
+
+---
+
+## Model Configuration
+
+Edit `models.toml` in the project root (or set `SLM_AUDIT_CONFIG` to a custom path):
+
+```toml
+[model]
+# Available presets:
+#   "smollm2-135m"  SmolLM2-135M-Instruct      ~100 MB  [fastest, CI triage]
+#   "smollm2-360m"  SmolLM2-360M-Instruct      ~250 MB  [fast CI]
+#   "smollm2-1.7b"  SmolLM2-1.7B-Instruct       ~1.1 GB  [default, best balance]
+#   "phi3"          Phi-3-mini-4k-instruct    ~2.2 GB  [strong reasoning]
+#   "llama3.2-1b"   Llama-3.2-1B-Instruct       ~0.8 GB
+#   "llama3.2-3b"   Llama-3.2-3B-Instruct       ~2.0 GB
+#   "qwen2.5-0.5b"  Qwen2.5-0.5B-Instruct       ~0.5 GB
+#   "qwen2.5-1.5b"  Qwen2.5-1.5B-Instruct       ~1.0 GB
+#   "qwen2.5-3b"    Qwen2.5-3B-Instruct         ~1.8 GB  [code-focused]
+preset = "smollm2-1.7b"
+
+# Custom GGUF model from any HuggingFace repo:
+# [model.custom]
+# repo_id  = "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF"
+# filename = "smollm2-1.7b-instruct-q4_k_m.gguf"
+```
+
+Models are cached at `~/.cache/kalosm/` on first download and reused automatically.
 
 ---
 
 ## Supported Languages & Patterns
+
+84 handcrafted patterns across 4 languages, each mapped to a CWE:
 
 ### C — 20 patterns
 
@@ -217,193 +422,6 @@ Inherits C patterns, plus:
 
 ---
 
-## Quick Start
-
-### Prerequisites
-
-| Requirement | Version |
-|-------------|---------|
-| Rust toolchain | 1.75+ |
-| Free disk space | ~1.5 GB (model cache) |
-| Internet access | First run only (model download) |
-
-### Build
-
-```bash
-git clone https://github.com/anubhavg-icpl/slm-l.git
-cd slm-l
-cargo build --release
-```
-
-Binary: `./target/release/slm-audit`
-
-### First Run
-
-```bash
-# Scan a C file — downloads SmolLM2-1.7B (~1.1 GB) on first run
-./target/release/slm-audit scan ./myproject/main.c
-```
-
-The model is cached at `~/.cache/kalosm/` and reused automatically.
-
----
-
-## Usage
-
-```
-slm-audit scan <PATH> [OPTIONS]
-
-Arguments:
-  <PATH>                  File or directory to audit
-
-Options:
-  --lang <LANG>           Override language detection [c|cpp|cs|rust]
-  --format <FORMAT>       Output format [terminal|json|sarif]  [default: terminal]
-  --timeout <SECS>        LLM inference timeout per file       [default: 60]
-  --min-confidence <LVL>  Minimum confidence to report         [default: low]
-                          [possible values: low, medium, high]
-  -h, --help              Print help
-  -V, --version           Print version
-```
-
-### Examples
-
-```bash
-# Audit a directory, all findings
-slm-audit scan ./src/
-
-# HIGH-confidence only (confirmed by both static scan and SLM)
-slm-audit scan ./src/ --min-confidence high
-
-# JSON output — pipe to jq for CRITICAL findings
-slm-audit scan ./src/ --format json \
-  | jq '.[] | .findings[] | select(.severity == "CRITICAL")'
-
-# SARIF for GitHub Code Scanning
-slm-audit scan ./src/ --format sarif > results.sarif
-
-# Large C++ project with extended timeout
-slm-audit scan ./engine/ --lang cpp --timeout 120
-
-# Audit a single file with confidence filter
-slm-audit scan ./src/auth.rs --min-confidence high
-```
-
-### Terminal Output
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-slm-audit — 3 file(s), 7 finding(s)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-[C] src/parser.c
-
-  [CRITICAL] buffer-overflow line 42 [high]
-  Pattern   : gets(
-  Risk      : gets() has no bounds checking — guaranteed buffer overflow.
-  Fix       : Use fgets(buf, sizeof(buf), stdin) with explicit size.
-
-  [HIGH]    format-string line 78 [medium]
-  Pattern   : printf(user_input)
-  Risk      : User-controlled format string enables arbitrary reads/writes.
-  Fix       : Always use printf("%s", user_input).
-
-[Rust] src/crypto.rs
-
-  [HIGH]    transmute line 15 [high]
-  Pattern   : std::mem::transmute
-  Risk      : Reinterprets byte layout between incompatible types — UB.
-  Fix       : Use bytemuck::cast or safe From/Into conversions.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Summary  CRITICAL:1  HIGH:3  MEDIUM:2  LOW:1
-```
-
----
-
-## Output Formats
-
-### JSON
-
-Structured output for SIEM, XDR, or custom dashboards:
-
-```json
-[
-  {
-    "file": "src/parser.c",
-    "language": "C",
-    "findings": [
-      {
-        "line": 42,
-        "severity": "CRITICAL",
-        "category": "buffer-overflow",
-        "pattern": "gets(",
-        "explanation": "gets() has no bounds checking — guaranteed buffer overflow.",
-        "suggestion": "Use fgets(buf, sizeof(buf), stdin) with explicit size.",
-        "confidence": "HIGH"
-      }
-    ]
-  }
-]
-```
-
-### SARIF 2.1.0
-
-Standard format for GitHub Code Scanning, VS Code, and most IDE security plugins:
-
-```bash
-slm-audit scan ./src/ --format sarif > results.sarif
-```
-
-SARIF output includes:
-- Tool metadata with version and `informationUri`
-- Rule definitions per vulnerability category
-- `level` (error / warning / note) mapped from severity
-- `rank` (0–100) mapped from confidence score
-- Fix suggestions in `fixes[]` array
-- `uriBaseId: %SRCROOT%` for portable relative paths
-
----
-
-## Model Configuration
-
-Edit `models.toml` in the project root (or set `SLM_AUDIT_CONFIG` to a custom path):
-
-```toml
-[model]
-# Available presets:
-#   "phi3"          Phi-3-mini-4k-instruct    ~2.2 GB
-#   "smollm2-135m"  SmolLM2-135M-Instruct      ~100 MB  [fastest]
-#   "smollm2-360m"  SmolLM2-360M-Instruct      ~250 MB  [fast, CI]
-#   "smollm2-1.7b"  SmolLM2-1.7B-Instruct       ~1.1 GB  [default]
-#   "llama3.2-1b"   Llama-3.2-1B-Instruct       ~0.8 GB
-#   "llama3.2-3b"   Llama-3.2-3B-Instruct       ~2.0 GB
-#   "qwen2.5-0.5b"  Qwen2.5-0.5B-Instruct       ~0.5 GB
-#   "qwen2.5-1.5b"  Qwen2.5-1.5B-Instruct       ~1.0 GB
-#   "qwen2.5-3b"    Qwen2.5-3B-Instruct         ~1.8 GB
-preset = "smollm2-1.7b"
-
-# Custom GGUF model:
-# [model.custom]
-# repo_id  = "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF"
-# filename = "smollm2-1.7b-instruct-q4_k_m.gguf"
-```
-
-Models are cached at `~/.cache/kalosm/` on first download.
-
-**Model selection guide:**
-
-| Model | Size | Best for |
-|-------|------|---------|
-| SmolLM2-135M | 100 MB | CI, resource-constrained, fast triage |
-| SmolLM2-360M | 250 MB | Balanced speed and quality for CI pipelines |
-| SmolLM2-1.7B | 1.1 GB | Best SmolLM quality, strong reasoning (default) |
-| Phi-3-mini-4k | 2.2 GB | Alternative, strong reasoning quality |
-| Qwen2.5-3B | 1.8 GB | Code-focused analysis, multilingual |
-| Llama-3.2-1B | 0.8 GB | Resource-constrained or fast CI runs |
-
----
-
 ## CI / GitHub Code Scanning Integration
 
 ### GitHub Actions
@@ -426,7 +444,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/kalosm
-          key: kalosm-phi3-mini-4k
+          key: smollm2-1.7b-v1
 
       - name: Build slm-audit
         run: cargo build --release
@@ -444,8 +462,6 @@ jobs:
         with:
           sarif_file: results.sarif
 ```
-
-Findings appear under **Security → Code scanning alerts** in your repository after the first push.
 
 ### GitLab CI
 
@@ -482,14 +498,13 @@ security-audit:
 | 10–50 KB | < 100 ms | 30–90 s (chunked by function) |
 | > 50 KB | < 500 ms | Multiple chunks, processed sequentially |
 
-> **Recommendation:** Use `--timeout 30 --min-confidence high` for CI gates.<br>
-> Reserve `--timeout 120 --min-confidence low` for thorough security reviews.
+> **CI gate:** `--timeout 30 --min-confidence high`<br>
+> **Thorough audit:** `--timeout 120 --min-confidence low`<br>
+> **Fast triage:** `--static-only` (no model needed)
 
 ### Air-Gap / Offline Deployment
 
-All inference runs locally via `kalosm`. No network calls during analysis.
-
-To deploy in a completely air-gapped environment:
+All inference runs locally via kalosm. No network calls during analysis.
 
 ```bash
 # Step 1 — on an internet-connected machine, build and warm the cache
@@ -506,6 +521,26 @@ slm-audit scan ./classified-project/
 
 ---
 
+## Features
+
+| Feature | Status |
+|---------|--------|
+| C, C++, C#/.NET, Rust support | Yes |
+| 84 static vulnerability patterns (CWE-mapped) | Yes |
+| Local SmolLM2 SLM inference via Kalosm | Yes |
+| Function-level chunking for large files | Yes |
+| Confidence scoring (LOW / MEDIUM / HIGH) | Yes |
+| `--min-confidence` filter | Yes |
+| `--static-only` mode (no model download) | Yes |
+| Per-file inference timeout (`--timeout`) | Yes |
+| Terminal, JSON, SARIF 2.1.0 output | Yes |
+| Configurable model presets via `models.toml` | Yes |
+| Custom GGUF model support | Yes |
+| 45 unit tests | Yes |
+| 100% offline — zero external API calls | Yes |
+
+---
+
 ## Roadmap
 
 | Item | Priority | Status |
@@ -514,28 +549,30 @@ slm-audit scan ./classified-project/
 | `--min-confidence` filter | P0 | Done |
 | Function-level file chunking | P0 | Done |
 | Inference timeout (`--timeout`) | P0 | Done |
-| Unit tests (45 passing) | P0 | Done |
-| Parallel file analysis | P1 | Planned |
-| `--no-llm` static-only mode | P1 | Done |
+| 45 unit tests passing | P0 | Done |
+| `--static-only` mode | P1 | Done |
 | Configurable model presets (SmolLM2, Qwen, Llama) | P1 | Done |
+| Parallel file analysis | P1 | Planned |
 | `.slm-audit-ignore` suppression file | P1 | Planned |
 | GPU acceleration (CUDA / Metal) | P2 | Planned |
 | Incremental scan (changed files only) | P2 | Planned |
 | VS Code extension | P2 | Planned |
+| SmolLM3-3B support (pending kalosm arch compat) | P2 | Research |
 | Security-fine-tuned model | P3 | Research |
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please follow these steps:
+Contributions are welcome.
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feat/your-feature`
 3. Add or update tests for any pattern or feature changes
 4. Run `cargo test` — all tests must pass
 5. Run `cargo clippy -- -D warnings`
-6. Open a pull request with a clear description of the change
+6. Run `cargo fmt -- --check`
+7. Open a pull request with a clear description
 
 ### Adding Vulnerability Patterns
 
