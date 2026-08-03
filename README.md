@@ -6,14 +6,14 @@
 
 **Local SLM-powered multi-language security code auditor**
 
-> Combines deterministic static analysis with on-device Phi-3 inference.<br>
+> Combines deterministic static analysis with on-device SmolLM2 inference.<br>
 > 100% offline — no API keys, no telemetry, no code leaves your machine.
 
 [![CI](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
 [![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024--edition-orange?style=flat-square)](https://www.rust-lang.org)
-[![Model](https://img.shields.io/badge/model-Phi--3--mini--4k-purple?style=flat-square)](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct)
+[![Model](https://img.shields.io/badge/model-SmolLM2--360M-purple?style=flat-square)](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct)
 [![Inference](https://img.shields.io/badge/inference-100%25_local-green?style=flat-square)](#model-configuration)
 [![SARIF](https://img.shields.io/badge/output-SARIF_2.1.0-informational?style=flat-square)](#output-formats)
 
@@ -47,7 +47,7 @@
 
 `slm-audit` is a command-line security scanner built entirely in Rust that audits **C, C++, C#/.NET, and Rust** source code for security vulnerabilities — without sending a single byte to the cloud.
 
-Unlike SaaS SAST tools, `slm-audit` runs a local small language model (Phi-3-mini, ~2.2 GB) directly on your hardware:
+Unlike SaaS SAST tools, `slm-audit` runs a local small language model (SmolLM2-360M, ~250 MB) directly on your hardware:
 
 - **Air-gapped friendly** — works in isolated, classified, or regulatory-constrained environments
 - **Zero data exfiltration risk** — proprietary source code never touches an external API
@@ -68,13 +68,13 @@ flowchart TD
     B -->|.cs| E[C#/.NET]
     B -->|.rs| F[Rust]
 
-    C & D & E & F --> G[Static Pre-Scanner\n50 regex patterns]
+    C & D & E & F --> G[Static Pre-Scanner\n84 regex patterns]
     G --> H{File size\n> 6 KB?}
     H -->|Yes| I[Function-level\nChunker]
     H -->|No| J[Single Chunk]
     I & J --> K[Prompt Builder\nstatic hits + code]
 
-    K --> L[Phi-3-mini\nLocal SLM Inference]
+    K --> L[SmolLM2-360M\nLocal SLM Inference]
     L --> M[JSON Response\nParser]
     M --> N[Confidence\nCorrelation]
     G --> N
@@ -87,7 +87,7 @@ flowchart TD
 | Layer | Speed | Scope |
 |-------|-------|-------|
 | Static regex pre-scan | < 100 ms | Known dangerous APIs and patterns |
-| SLM semantic analysis | 5–60 s | Logic, data flow, contextual risk |
+| SLM semantic analysis | 2–30 s | Logic, data flow, contextual risk |
 
 Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findings receive `confidence: MEDIUM`.
 
@@ -99,7 +99,7 @@ Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findi
 |---------|--------|
 | C, C++, C#/.NET, Rust support | Yes |
 | 84 static vulnerability patterns | Yes |
-| Local Phi-3 SLM inference via Kalosm | Yes |
+| Local SmolLM2 SLM inference via Kalosm | Yes |
 | Function-level chunking for large files | Yes |
 | Confidence scoring (LOW / MEDIUM / HIGH) | Yes |
 | `--min-confidence` filter | Yes |
@@ -109,6 +109,7 @@ Findings confirmed by **both** layers receive `confidence: HIGH`. SLM-only findi
 | SARIF 2.1.0 (GitHub Code Scanning) | Yes |
 | 45 unit tests | Yes |
 | 100% offline — zero external API calls | Yes |
+| Configurable model presets via `models.toml` | Yes |
 | Custom GGUF model support via `models.toml` | Yes |
 
 ---
@@ -223,7 +224,7 @@ Inherits C patterns, plus:
 | Requirement | Version |
 |-------------|---------|
 | Rust toolchain | 1.75+ |
-| Free disk space | ~3 GB (model cache) |
+| Free disk space | ~500 MB (model cache) |
 | Internet access | First run only (model download) |
 
 ### Build
@@ -239,7 +240,7 @@ Binary: `./target/release/slm-audit`
 ### First Run
 
 ```bash
-# Scan a C file — downloads Phi-3-mini (~2.2 GB) on first run
+# Scan a C file — downloads SmolLM2-360M (~250 MB) on first run
 ./target/release/slm-audit scan ./myproject/main.c
 ```
 
@@ -366,18 +367,26 @@ SARIF output includes:
 
 ## Model Configuration
 
-Edit `models.toml` in the project root:
+Edit `models.toml` in the project root (or set `SLM_AUDIT_CONFIG` to a custom path):
 
 ```toml
 [model]
-# "phi3"   — Phi-3-mini-4k-instruct (~2.2 GB)  [default, recommended]
-# "llama3" — Llama-3.2-3B-Instruct  (~1.9 GB)  [lighter alternative]
-preset = "phi3"
+# Available presets:
+#   "phi3"          Phi-3-mini-4k-instruct    ~2.2 GB
+#   "smollm2-135m"  SmolLM2-135M-Instruct      ~100 MB  [fastest]
+#   "smollm2-360m"  SmolLM2-360M-Instruct      ~250 MB  [default]
+#   "smollm2-1.7b"  SmolLM2-1.7B-Instruct       ~1.1 GB
+#   "llama3.2-1b"   Llama-3.2-1B-Instruct       ~0.8 GB
+#   "llama3.2-3b"   Llama-3.2-3B-Instruct       ~2.0 GB
+#   "qwen2.5-0.5b"  Qwen2.5-0.5B-Instruct       ~0.5 GB
+#   "qwen2.5-1.5b"  Qwen2.5-1.5B-Instruct       ~1.0 GB
+#   "qwen2.5-3b"    Qwen2.5-3B-Instruct         ~1.8 GB
+preset = "smollm2-360m"
 
-# Use any GGUF model from HuggingFace:
+# Custom GGUF model:
 # [model.custom]
-# repo_id  = "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF"
-# filename = "qwen2.5-coder-3b-instruct-q4_k_m.gguf"
+# repo_id  = "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF"
+# filename = "smollm2-1.7b-instruct-q4_k_m.gguf"
 ```
 
 Models are cached at `~/.cache/kalosm/` on first download.
@@ -386,9 +395,13 @@ Models are cached at `~/.cache/kalosm/` on first download.
 
 | Model | Size | Best for |
 |-------|------|---------|
-| Phi-3-mini-4k | 2.2 GB | General audit, balanced speed and quality |
-| Qwen2.5-Coder-3B | 1.8 GB | Code-focused analysis, multilingual |
-| Llama-3.2-1B | 0.7 GB | Resource-constrained or fast CI runs |
+| SmolLM2-135M | 100 MB | CI, resource-constrained, fast triage |
+| SmolLM2-360M | 250 MB | Balanced speed and quality for local dev |
+| SmolLM2-360M | 250 MB | Balanced speed and quality for local dev (default) |
+| Phi-3-mini-4k | 2.2 GB | General audit, strong reasoning quality |
+| SmolLM2-1.7B | 1.1 GB | Best SmolLM quality, strong reasoning |
+| Qwen2.5-3B | 1.8 GB | Code-focused analysis, multilingual |
+| Llama-3.2-1B | 0.8 GB | Resource-constrained or fast CI runs |
 
 ---
 
@@ -456,18 +469,18 @@ security-audit:
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| RAM | 4 GB | 8 GB |
-| Disk (model cache) | 3 GB | 5 GB |
+| RAM | 2 GB | 4 GB |
+| Disk (model cache) | 500 MB | 3 GB |
 | CPU | 4 cores | 8+ cores |
 | OS | Linux / macOS / Windows | Linux x86-64 |
 
 ### Performance
 
-| File size | Static scan | SLM analysis (Phi-3, CPU) |
+| File size | Static scan | SLM analysis (SmolLM2-360M, CPU) |
 |-----------|-------------|--------------------------|
-| < 1 KB | < 5 ms | 5–15 s |
-| 1–10 KB | < 20 ms | 15–60 s |
-| 10–50 KB | < 100 ms | 60–180 s (chunked by function) |
+| < 1 KB | < 5 ms | 2–8 s |
+| 1–10 KB | < 20 ms | 8–30 s |
+| 10–50 KB | < 100 ms | 30–90 s (chunked by function) |
 | > 50 KB | < 500 ms | Multiple chunks, processed sequentially |
 
 > **Recommendation:** Use `--timeout 30 --min-confidence high` for CI gates.<br>
@@ -504,7 +517,8 @@ slm-audit scan ./classified-project/
 | Inference timeout (`--timeout`) | P0 | Done |
 | Unit tests (45 passing) | P0 | Done |
 | Parallel file analysis | P1 | Planned |
-| `--no-llm` static-only mode | P1 | Planned |
+| `--no-llm` static-only mode | P1 | Done |
+| Configurable model presets (SmolLM2, Qwen, Llama) | P1 | Done |
 | `.slm-audit-ignore` suppression file | P1 | Planned |
 | GPU acceleration (CUDA / Metal) | P2 | Planned |
 | Incremental scan (changed files only) | P2 | Planned |
@@ -520,7 +534,7 @@ Contributions are welcome. Please follow these steps:
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feat/your-feature`
 3. Add or update tests for any pattern or feature changes
-4. Run `cargo test` — all 17 tests must pass
+4. Run `cargo test` — all tests must pass
 5. Run `cargo clippy -- -D warnings`
 6. Open a pull request with a clear description of the change
 
@@ -559,7 +573,7 @@ MIT License — see [LICENSE](LICENSE) for full text.
 
 <img src="assets/logo.avif" alt="slm-audit logo" width="80">
 
-Built with [Kalosm](https://github.com/floneum/floneum) &nbsp;·&nbsp; Powered by [Phi-3-mini](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct) &nbsp;·&nbsp; Written in [Rust](https://www.rust-lang.org)
+Built with [Kalosm](https://github.com/floneum/floneum) &nbsp;·&nbsp; Powered by [SmolLM2](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) &nbsp;·&nbsp; Written in [Rust](https://www.rust-lang.org)
 
 **[Report an Issue](https://github.com/anubhavg-icpl/slm-l/issues)** &nbsp;·&nbsp; **[anubhavg-icpl](https://github.com/anubhavg-icpl)**
 
