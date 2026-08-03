@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use colored::Colorize;
 use crate::{detector::Language, llm::Finding};
+use colored::Colorize;
 
 pub fn print_terminal(results: &[(PathBuf, Language, Vec<Finding>)]) {
     let total: usize = results.iter().map(|(_, _, f)| f.len()).sum();

@@ -12,7 +12,10 @@ pub struct Chunk {
 
 pub fn chunk_source(source: &str, lang: Language) -> Vec<Chunk> {
     if source.len() <= CHUNK_CHARS {
-        return vec![Chunk { start_line: 1, content: source.to_string() }];
+        return vec![Chunk {
+            start_line: 1,
+            content: source.to_string(),
+        }];
     }
 
     let boundaries = find_function_starts(source, lang);
@@ -63,7 +66,10 @@ fn build_chunks_from_boundaries(source: &str, boundaries: &[usize]) -> Vec<Chunk
         let seg = lines[(boundary - 1)..seg_end].join("\n");
 
         if current_buf.len() + seg.len() > CHUNK_CHARS && !current_buf.is_empty() {
-            chunks.push(Chunk { start_line: current_start, content: current_buf.clone() });
+            chunks.push(Chunk {
+                start_line: current_start,
+                content: current_buf.clone(),
+            });
             current_start = boundary;
             current_buf = seg;
         } else {
@@ -77,11 +83,17 @@ fn build_chunks_from_boundaries(source: &str, boundaries: &[usize]) -> Vec<Chunk
     }
 
     if !current_buf.is_empty() {
-        chunks.push(Chunk { start_line: current_start, content: current_buf });
+        chunks.push(Chunk {
+            start_line: current_start,
+            content: current_buf,
+        });
     }
 
     if chunks.is_empty() {
-        chunks.push(Chunk { start_line: 1, content: source.to_string() });
+        chunks.push(Chunk {
+            start_line: 1,
+            content: source.to_string(),
+        });
     }
 
     chunks
@@ -94,7 +106,10 @@ fn split_by_lines(source: &str) -> Vec<Chunk> {
 
     for (i, line) in source.lines().enumerate() {
         if current_buf.len() + line.len() + 1 > CHUNK_CHARS && !current_buf.is_empty() {
-            chunks.push(Chunk { start_line: current_start, content: current_buf.clone() });
+            chunks.push(Chunk {
+                start_line: current_start,
+                content: current_buf.clone(),
+            });
             current_start = i + 1;
             current_buf = line.to_string();
         } else {
@@ -106,7 +121,10 @@ fn split_by_lines(source: &str) -> Vec<Chunk> {
     }
 
     if !current_buf.is_empty() {
-        chunks.push(Chunk { start_line: current_start, content: current_buf });
+        chunks.push(Chunk {
+            start_line: current_start,
+            content: current_buf,
+        });
     }
 
     chunks

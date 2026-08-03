@@ -46,7 +46,8 @@ mod tests {
     }
 
     fn has_sev(hits: &[StaticHit], name: &str, sev: &str) -> bool {
-        hits.iter().any(|h| h.pattern_name == name && h.severity == sev)
+        hits.iter()
+            .any(|h| h.pattern_name == name && h.severity == sev)
     }
 
     // ── C ──────────────────────────────────────────────────────────────────
@@ -80,7 +81,10 @@ mod tests {
     fn c_safe_code_no_critical() {
         let src = r#"int main() { printf("%s\n", "hello"); return 0; }"#;
         let hits = scan(src, Language::C);
-        assert!(hits.iter().all(|h| h.severity != "CRITICAL"), "safe C code should have no CRITICAL");
+        assert!(
+            hits.iter().all(|h| h.severity != "CRITICAL"),
+            "safe C code should have no CRITICAL"
+        );
     }
 
     // ── C++ ────────────────────────────────────────────────────────────────
@@ -102,7 +106,11 @@ mod tests {
     #[test]
     fn dotnet_binaryformatter_is_critical() {
         let src = r#"var bf = new BinaryFormatter(); bf.Deserialize(s);"#;
-        assert!(has_sev(&scan(src, Language::DotNet), "binary-formatter", "CRITICAL"));
+        assert!(has_sev(
+            &scan(src, Language::DotNet),
+            "binary-formatter",
+            "CRITICAL"
+        ));
     }
 
     #[test]
@@ -147,7 +155,10 @@ mod tests {
     fn rust_safe_code_no_critical() {
         let src = r#"fn main() { println!("hello world"); }"#;
         let hits = scan(src, Language::Rust);
-        assert!(hits.iter().all(|h| h.severity != "CRITICAL"), "safe Rust should have no CRITICAL");
+        assert!(
+            hits.iter().all(|h| h.severity != "CRITICAL"),
+            "safe Rust should have no CRITICAL"
+        );
     }
 
     // ── C new patterns ─────────────────────────────────────────────────────
@@ -225,25 +236,41 @@ mod tests {
     #[test]
     fn dotnet_ldap_injection_is_critical() {
         let src = r#"var ds = new DirectorySearcher("(uid=" + userInput + ")");"#;
-        assert!(has_sev(&scan(src, Language::DotNet), "ldap-injection", "CRITICAL"));
+        assert!(has_sev(
+            &scan(src, Language::DotNet),
+            "ldap-injection",
+            "CRITICAL"
+        ));
     }
 
     #[test]
     fn dotnet_xpath_injection_is_critical() {
         let src = r#"var nodes = doc.SelectNodes("/users[@id='" + id + "']");"#;
-        assert!(has_sev(&scan(src, Language::DotNet), "xpath-injection", "CRITICAL"));
+        assert!(has_sev(
+            &scan(src, Language::DotNet),
+            "xpath-injection",
+            "CRITICAL"
+        ));
     }
 
     #[test]
     fn dotnet_type_name_handling_is_critical() {
         let src = r#"var settings = new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.All };"#;
-        assert!(has_sev(&scan(src, Language::DotNet), "type-name-handling", "CRITICAL"));
+        assert!(has_sev(
+            &scan(src, Language::DotNet),
+            "type-name-handling",
+            "CRITICAL"
+        ));
     }
 
     #[test]
     fn dotnet_soap_formatter_is_critical() {
         let src = r#"var sf = new SoapFormatter(); sf.Deserialize(stream);"#;
-        assert!(has_sev(&scan(src, Language::DotNet), "soap-formatter", "CRITICAL"));
+        assert!(has_sev(
+            &scan(src, Language::DotNet),
+            "soap-formatter",
+            "CRITICAL"
+        ));
     }
 
     #[test]
