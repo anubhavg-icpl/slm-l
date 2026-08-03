@@ -5,8 +5,8 @@
 # Presets:
 #   "phi3"          - Phi-3-mini-4k-instruct    (~2.2 GB, strong code/reasoning)
 #   "smollm2-135m"  - SmolLM2-135M-Instruct      (~100 MB, fastest, minimal RAM)
-#   "smollm2-360m"  - SmolLM2-360M-Instruct      (~250 MB, default, good speed/quality balance)
-#   "smollm2-1.7b"  - SmolLM2-1.7B-Instruct       (~1.1 GB, best SmolLM quality)
+#   "smollm2-360m"  - SmolLM2-360M-Instruct      (~250 MB, fast, good for CI)
+#   "smollm2-1.7b"  - SmolLM2-1.7B-Instruct       (~1.1 GB, default, best SmolLM quality)
 #   "llama3.2-1b"   - Llama-3.2-1B-Instruct       (~0.8 GB)
 #   "llama3.2-3b"   - Llama-3.2-3B-Instruct       (~2.0 GB)
 #   "qwen2.5-0.5b"  - Qwen2.5-0.5B-Instruct       (~0.5 GB)
@@ -15,7 +15,7 @@
 #   "custom"        - Use [model.custom] below
 
 [model]
-preset = "smollm2-360m"
+preset = "smollm2-1.7b"
 
 # To use a custom GGUF model, set preset = "custom" and fill in:
 # [model.custom]

@@ -13,7 +13,7 @@
 [![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen?style=flat-square)](https://github.com/anubhavg-icpl/slm-l)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024--edition-orange?style=flat-square)](https://www.rust-lang.org)
-[![Model](https://img.shields.io/badge/model-SmolLM2--360M-purple?style=flat-square)](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct)
+[![Model](https://img.shields.io/badge/model-SmolLM2--1.7B-purple?style=flat-square)](https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct)
 [![Inference](https://img.shields.io/badge/inference-100%25_local-green?style=flat-square)](#model-configuration)
 [![SARIF](https://img.shields.io/badge/output-SARIF_2.1.0-informational?style=flat-square)](#output-formats)
 
@@ -47,7 +47,7 @@
 
 `slm-audit` is a command-line security scanner built entirely in Rust that audits **C, C++, C#/.NET, and Rust** source code for security vulnerabilities — without sending a single byte to the cloud.
 
-Unlike SaaS SAST tools, `slm-audit` runs a local small language model (SmolLM2-360M, ~250 MB) directly on your hardware:
+Unlike SaaS SAST tools, `slm-audit` runs a local small language model (SmolLM2-1.7B, ~1.1 GB) directly on your hardware:
 
 - **Air-gapped friendly** — works in isolated, classified, or regulatory-constrained environments
 - **Zero data exfiltration risk** — proprietary source code never touches an external API
@@ -74,7 +74,7 @@ flowchart TD
     H -->|No| J[Single Chunk]
     I & J --> K[Prompt Builder\nstatic hits + code]
 
-    K --> L[SmolLM2-360M\nLocal SLM Inference]
+    K --> L[SmolLM2-1.7B\nLocal SLM Inference]
     L --> M[JSON Response\nParser]
     M --> N[Confidence\nCorrelation]
     G --> N
@@ -224,7 +224,7 @@ Inherits C patterns, plus:
 | Requirement | Version |
 |-------------|---------|
 | Rust toolchain | 1.75+ |
-| Free disk space | ~500 MB (model cache) |
+| Free disk space | ~1.5 GB (model cache) |
 | Internet access | First run only (model download) |
 
 ### Build
@@ -240,7 +240,7 @@ Binary: `./target/release/slm-audit`
 ### First Run
 
 ```bash
-# Scan a C file — downloads SmolLM2-360M (~250 MB) on first run
+# Scan a C file — downloads SmolLM2-1.7B (~1.1 GB) on first run
 ./target/release/slm-audit scan ./myproject/main.c
 ```
 
@@ -374,14 +374,14 @@ Edit `models.toml` in the project root (or set `SLM_AUDIT_CONFIG` to a custom pa
 # Available presets:
 #   "phi3"          Phi-3-mini-4k-instruct    ~2.2 GB
 #   "smollm2-135m"  SmolLM2-135M-Instruct      ~100 MB  [fastest]
-#   "smollm2-360m"  SmolLM2-360M-Instruct      ~250 MB  [default]
-#   "smollm2-1.7b"  SmolLM2-1.7B-Instruct       ~1.1 GB
+#   "smollm2-360m"  SmolLM2-360M-Instruct      ~250 MB  [fast, CI]
+#   "smollm2-1.7b"  SmolLM2-1.7B-Instruct       ~1.1 GB  [default]
 #   "llama3.2-1b"   Llama-3.2-1B-Instruct       ~0.8 GB
 #   "llama3.2-3b"   Llama-3.2-3B-Instruct       ~2.0 GB
 #   "qwen2.5-0.5b"  Qwen2.5-0.5B-Instruct       ~0.5 GB
 #   "qwen2.5-1.5b"  Qwen2.5-1.5B-Instruct       ~1.0 GB
 #   "qwen2.5-3b"    Qwen2.5-3B-Instruct         ~1.8 GB
-preset = "smollm2-360m"
+preset = "smollm2-1.7b"
 
 # Custom GGUF model:
 # [model.custom]
@@ -396,10 +396,9 @@ Models are cached at `~/.cache/kalosm/` on first download.
 | Model | Size | Best for |
 |-------|------|---------|
 | SmolLM2-135M | 100 MB | CI, resource-constrained, fast triage |
-| SmolLM2-360M | 250 MB | Balanced speed and quality for local dev |
-| SmolLM2-360M | 250 MB | Balanced speed and quality for local dev (default) |
-| Phi-3-mini-4k | 2.2 GB | General audit, strong reasoning quality |
-| SmolLM2-1.7B | 1.1 GB | Best SmolLM quality, strong reasoning |
+| SmolLM2-360M | 250 MB | Balanced speed and quality for CI pipelines |
+| SmolLM2-1.7B | 1.1 GB | Best SmolLM quality, strong reasoning (default) |
+| Phi-3-mini-4k | 2.2 GB | Alternative, strong reasoning quality |
 | Qwen2.5-3B | 1.8 GB | Code-focused analysis, multilingual |
 | Llama-3.2-1B | 0.8 GB | Resource-constrained or fast CI runs |
 
@@ -469,14 +468,14 @@ security-audit:
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| RAM | 2 GB | 4 GB |
-| Disk (model cache) | 500 MB | 3 GB |
+| RAM | 4 GB | 8 GB |
+| Disk (model cache) | 1.5 GB | 3 GB |
 | CPU | 4 cores | 8+ cores |
 | OS | Linux / macOS / Windows | Linux x86-64 |
 
 ### Performance
 
-| File size | Static scan | SLM analysis (SmolLM2-360M, CPU) |
+| File size | Static scan | SLM analysis (SmolLM2-1.7B, CPU) |
 |-----------|-------------|--------------------------|
 | < 1 KB | < 5 ms | 2–8 s |
 | 1–10 KB | < 20 ms | 8–30 s |
@@ -573,7 +572,7 @@ MIT License — see [LICENSE](LICENSE) for full text.
 
 <img src="assets/logo.avif" alt="slm-audit logo" width="80">
 
-Built with [Kalosm](https://github.com/floneum/floneum) &nbsp;·&nbsp; Powered by [SmolLM2](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct) &nbsp;·&nbsp; Written in [Rust](https://www.rust-lang.org)
+Built with [Kalosm](https://github.com/floneum/floneum) &nbsp;·&nbsp; Powered by [SmolLM2](https://huggingface.co/HuggingFaceTB/SmolLM2-1.7B-Instruct) &nbsp;·&nbsp; Written in [Rust](https://www.rust-lang.org)
 
 **[Report an Issue](https://github.com/anubhavg-icpl/slm-l/issues)** &nbsp;·&nbsp; **[anubhavg-icpl](https://github.com/anubhavg-icpl)**
 
