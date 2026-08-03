@@ -3,13 +3,17 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use walkdir::WalkDir;
 
-use crate::{detector::Language, llm::{AuditModel, Confidence, Finding}, report, scanner};
+use crate::{
+    detector::Language,
+    llm::{AuditModel, Confidence, Finding},
+    report, scanner,
+};
 
 #[derive(Parser)]
 #[command(
     name = "slm-audit",
     about = "Local SLM-powered security auditor for C / C++ / C# / Rust",
-    long_about = "Combines fast static pattern matching with local Phi-3 SLM inference.\nRuns 100% offline — no API keys, no data leaves your machine.",
+    long_about = "Combines fast static pattern matching with local SmolLM2 SLM inference.\nRuns 100% offline — no API keys, no data leaves your machine.",
     version
 )]
 struct Cli {
@@ -87,7 +91,7 @@ fn static_hits_to_findings(hits: &[scanner::StaticHit]) -> Vec<Finding> {
             pattern: h.matched_text.clone(),
             explanation: h.description.to_string(),
             suggestion: String::new(),
-            confidence: Confidence::Low,
+            confidence: Confidence::Medium,
         })
         .collect()
 }
@@ -165,7 +169,8 @@ pub async fn run() -> anyhow::Result<()> {
                 let static_hits = scanner::scan(&source, language);
 
                 let mut findings = if let Some(ref m) = model {
-                    m.analyze(&source, language, &static_hits, file, timeout).await?
+                    m.analyze(&source, language, &static_hits, file, timeout)
+                        .await?
                 } else {
                     static_hits_to_findings(&static_hits)
                 };
